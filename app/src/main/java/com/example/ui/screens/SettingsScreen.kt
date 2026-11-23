@@ -1,6 +1,6 @@
 package com.example.ui.screens
 
-import android.os.Build
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -16,11 +16,11 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +37,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -49,15 +50,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
-import com.example.data.model.AppThemeMode
 import com.example.data.model.PageFitPolicy
 import com.example.data.model.PdfColorMode
 import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
+import com.example.ui.model.toAppThemeMode
+import com.example.ui.model.toThemeMode
+import com.example.ui.theme.TeenaTheme
+import com.example.ui.theme.ThemeMode
 import com.example.ui.viewmodel.SettingsViewModel
 import kotlinx.coroutines.launch
 
@@ -72,14 +74,28 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var showClearHistoryDialog by remember { mutableStateOf(false) }
 
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val c = TeenaTheme.colors
+    val cs = MaterialTheme.colorScheme
+
     val cacheClearedMsg = stringResource(R.string.settings_cache_cleared)
     val historyClearedMsg = stringResource(R.string.settings_history_cleared)
+    val themeSystemLabel = stringResource(R.string.theme_system)
+    val themeLightLabel = stringResource(R.string.theme_light)
+    val themeDarkLabel = stringResource(R.string.theme_dark)
 
     Scaffold(
+        containerColor = cs.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = cs.background,
+                    titleContentColor = cs.onBackground,
+                    navigationIconContentColor = cs.onBackground
+                ),
                 navigationIcon = {
                     IconButton(
                         onClick = onNavigateBack,
@@ -88,7 +104,7 @@ fun SettingsScreen(
                             .testTag("settings_back_button")
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = stringResource(R.string.action_back)
                         )
                     }
@@ -96,38 +112,35 @@ fun SettingsScreen(
                 title = {
                     Text(
                         text = stringResource(R.string.settings_title),
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.titleLarge
                     )
                 }
             )
         }
     ) { innerPadding ->
         LazyColumn(
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(horizontal = s.screenH, vertical = s.md),
+            verticalArrangement = Arrangement.spacedBy(s.lg),
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            item(key = "section_appearance") {
+            item(key = "section_appearance", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_appearance)) {
                     ChipOptionGroup(
                         label = stringResource(R.string.settings_app_theme),
-                        options = AppThemeMode.entries,
-                        selected = prefs.appThemeMode,
-                        optionLabel = { it.label },
-                        onSelect = viewModel::setAppThemeMode
+                        options = ThemeMode.entries,
+                        selected = prefs.appThemeMode.toThemeMode(),
+                        optionLabel = { mode ->
+                            when (mode) {
+                                ThemeMode.System -> themeSystemLabel
+                                ThemeMode.Light -> themeLightLabel
+                                ThemeMode.Dark -> themeDarkLabel
+                            }
+                        },
+                        onSelect = { mode -> viewModel.setAppThemeMode(mode.toAppThemeMode()) }
                     )
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                        ToggleSettingRow(
-                            title = stringResource(R.string.settings_dynamic_color),
-                            subtitle = stringResource(R.string.settings_dynamic_color_desc),
-                            checked = prefs.dynamicColor,
-                            onCheckedChange = viewModel::setDynamicColor
-                        )
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ChipOptionGroup(
                         label = stringResource(R.string.settings_default_pdf_color),
                         options = PdfColorMode.entries,
@@ -138,7 +151,7 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "section_reading") {
+            item(key = "section_reading", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_reading)) {
                     ChipOptionGroup(
                         label = stringResource(R.string.settings_default_layout),
@@ -147,7 +160,7 @@ fun SettingsScreen(
                         optionLabel = { it.label },
                         onSelect = viewModel::setDefaultLayoutMode
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ChipOptionGroup(
                         label = stringResource(R.string.settings_default_fit),
                         options = PageFitPolicy.entries,
@@ -155,21 +168,21 @@ fun SettingsScreen(
                         optionLabel = { it.label },
                         onSelect = viewModel::setDefaultPageFitPolicy
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_rtl),
                         subtitle = stringResource(R.string.settings_rtl_desc),
                         checked = prefs.rtlReading,
                         onCheckedChange = viewModel::setRtlReading
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_keep_screen_on),
                         subtitle = stringResource(R.string.settings_keep_screen_on_desc),
                         checked = prefs.keepScreenOn,
                         onCheckedChange = viewModel::setKeepScreenOn
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_volume_keys),
                         subtitle = stringResource(R.string.settings_volume_keys_desc),
@@ -179,7 +192,7 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "section_fullscreen") {
+            item(key = "section_fullscreen", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_fullscreen)) {
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_show_page_pill),
@@ -187,7 +200,7 @@ fun SettingsScreen(
                         checked = prefs.showPageIndicatorPill,
                         onCheckedChange = viewModel::setShowPageIndicatorPill
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_show_shortcuts),
                         subtitle = stringResource(R.string.settings_show_shortcuts_desc),
@@ -197,7 +210,7 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "section_rendering") {
+            item(key = "section_rendering", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_rendering)) {
                     ChipOptionGroup(
                         label = stringResource(R.string.settings_render_quality),
@@ -206,14 +219,14 @@ fun SettingsScreen(
                         optionLabel = { it.label },
                         onSelect = viewModel::setRenderQuality
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_hide_margins),
                         subtitle = stringResource(R.string.settings_hide_margins_desc),
                         checked = prefs.hideMarginsByDefault,
                         onCheckedChange = viewModel::setHideMarginsByDefault
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ToggleSettingRow(
                         title = stringResource(R.string.settings_page_spacing),
                         subtitle = stringResource(R.string.settings_page_spacing_desc),
@@ -223,17 +236,17 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "section_storage") {
+            item(key = "section_storage", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_storage)) {
                     ToggleSettingRow(
                         title = stringResource(R.string.incognito_mode),
-                        subtitle = "Pause saving reading progress and recently opened document history",
+                        subtitle = stringResource(R.string.incognito_mode_active),
                         checked = prefs.incognitoMode,
                         onCheckedChange = viewModel::setIncognitoMode
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ActionSettingRow(
-                        icon = Icons.Filled.CleaningServices,
+                        icon = Icons.Rounded.CleaningServices,
                         title = stringResource(R.string.settings_clear_cache),
                         subtitle = stringResource(R.string.settings_clear_cache_desc),
                         onClick = {
@@ -242,9 +255,9 @@ fun SettingsScreen(
                             }
                         }
                     )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     ActionSettingRow(
-                        icon = Icons.Filled.DeleteSweep,
+                        icon = Icons.Rounded.DeleteSweep,
                         title = stringResource(R.string.settings_clear_history),
                         subtitle = stringResource(R.string.settings_clear_history_desc),
                         isDestructive = true,
@@ -253,8 +266,8 @@ fun SettingsScreen(
                 }
             }
 
-            item(key = "bottom_spacer") {
-                Spacer(modifier = Modifier.height(24.dp))
+            item(key = "bottom_spacer", contentType = "spacer") {
+                Spacer(modifier = Modifier.height(s.xl))
             }
         }
     }
@@ -262,8 +275,10 @@ fun SettingsScreen(
     if (showClearHistoryDialog) {
         AlertDialog(
             onDismissRequest = { showClearHistoryDialog = false },
+            containerColor = cs.surface,
+            shape = MaterialTheme.shapes.extraLarge,
             title = { Text(stringResource(R.string.settings_clear_history)) },
-            text = { Text("Remove all saved library entries, bookmarks, and notes from MJ PDF? Your actual PDF files on storage will remain untouched.") },
+            text = { Text(stringResource(R.string.settings_clear_history_confirm)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -290,20 +305,23 @@ private fun SettingsCardSection(
     title: String,
     content: @Composable () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
             text = title.uppercase(),
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 6.dp, bottom = 8.dp)
+            color = cs.primary,
+            modifier = Modifier.padding(start = s.xs, bottom = s.sm)
         )
         Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+            shape = MaterialTheme.shapes.large,
+            color = cs.surface,
+            border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
+            Column(modifier = Modifier.padding(horizontal = s.lg, vertical = s.xs)) {
                 content()
             }
         }
@@ -318,15 +336,21 @@ private fun <T> ChipOptionGroup(
     optionLabel: (T) -> String,
     onSelect: (T) -> Unit
 ) {
-    Column(modifier = Modifier.padding(vertical = 10.dp)) {
+    val s = TeenaTheme.spacing
+    Column(modifier = Modifier.padding(vertical = s.md)) {
         Text(text = label, style = MaterialTheme.typography.titleSmall)
-        Spacer(modifier = Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(options) { item ->
+        Spacer(modifier = Modifier.height(s.sm))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+            items(
+                items = options,
+                key = { optionLabel(it) },
+                contentType = { "option_chip" }
+            ) { item ->
                 FilterChip(
                     selected = item == selected,
                     onClick = { onSelect(item) },
-                    label = { Text(optionLabel(item)) }
+                    label = { Text(optionLabel(item), style = MaterialTheme.typography.labelMedium) },
+                    shape = CircleShape
                 )
             }
         }
@@ -340,14 +364,19 @@ private fun ToggleSettingRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val s = TeenaTheme.spacing
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 12.dp)
+            .padding(vertical = s.md)
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = s.md)
+        ) {
             Text(text = title, style = MaterialTheme.typography.titleSmall)
             Text(
                 text = subtitle,
@@ -367,25 +396,27 @@ private fun ActionSettingRow(
     isDestructive: Boolean = false,
     onClick: () -> Unit
 ) {
-    val tint = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val s = TeenaTheme.spacing
+    val cs = MaterialTheme.colorScheme
+    val tint = if (isDestructive) cs.error else cs.primary
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(vertical = 14.dp)
+            .padding(vertical = s.md)
     ) {
         Icon(imageVector = icon, contentDescription = null, tint = tint)
-        Column(modifier = Modifier.padding(start = 14.dp)) {
+        Column(modifier = Modifier.padding(start = s.md)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                color = if (isDestructive) cs.error else cs.onSurface
             )
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = cs.onSurfaceVariant
             )
         }
     }

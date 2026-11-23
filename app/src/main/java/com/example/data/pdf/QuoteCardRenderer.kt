@@ -86,7 +86,7 @@ object QuoteCardRenderer {
         val metaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor(secondaryText)
             textSize = 22f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
         }
 
         val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {

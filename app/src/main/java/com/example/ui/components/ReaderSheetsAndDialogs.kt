@@ -3,7 +3,6 @@ package com.example.ui.components
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -69,7 +67,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.BookmarkEntity
 import com.example.data.model.PageFitPolicy
@@ -77,7 +74,9 @@ import com.example.data.model.PdfColorMode
 import com.example.data.model.ReadingStatus
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.TocEntry
+import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.ReaderUiState
+import java.util.Locale
 
 @Composable
 fun GoToPageDialog(
@@ -143,6 +142,9 @@ fun BookmarksAndTocBottomSheet(
     onRenameBookmark: (Long, String) -> Unit,
     onDeleteBookmark: (Long) -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+
     var selectedTab by remember { mutableIntStateOf(0) }
     var newBookmarkTitle by remember { mutableStateOf("") }
     var editingBookmark by remember { mutableStateOf<BookmarkEntity?>(null) }
@@ -152,14 +154,14 @@ fun BookmarksAndTocBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
                 text = stringResource(R.string.reader_bookmarks),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
             PrimaryTabRow(selectedTabIndex = selectedTab) {
                 Tab(
@@ -179,23 +181,22 @@ fun BookmarksAndTocBottomSheet(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
             when (selectedTab) {
                 0 -> {
-                    // Table of Contents
                     if (tocEntries.isEmpty()) {
                         Text(
-                            text = "No Table of Contents chapters detected in this document.",
+                            text = stringResource(R.string.reader_no_toc),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
+                            modifier = Modifier.padding(vertical = s.xl)
                         )
                     } else {
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 340.dp)
+                                .heightIn(max = sz.sheetListMaxHeight)
                         ) {
                             items(tocEntries) { entry ->
                                 val isCurrent = entry.pageIndex == currentPage
@@ -207,14 +208,14 @@ fun BookmarksAndTocBottomSheet(
                                             onJumpToPage(entry.pageIndex)
                                             onDismiss()
                                         }
-                                        .padding(vertical = 11.dp)
+                                        .padding(vertical = s.md)
                                 ) {
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.Toc,
                                         contentDescription = null,
                                         tint = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(s.md))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = entry.chapterLabel,
@@ -231,23 +232,22 @@ fun BookmarksAndTocBottomSheet(
                                     }
                                     Surface(
                                         color = if (isCurrent) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                                        shape = RoundedCornerShape(8.dp)
+                                        shape = MaterialTheme.shapes.small
                                     ) {
                                         Text(
                                             text = "p. ${entry.pageIndex + 1}",
                                             style = MaterialTheme.typography.labelSmall,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            modifier = Modifier.padding(horizontal = s.sm, vertical = s.xs)
                                         )
                                     }
                                 }
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                HorizontalDivider(color = TeenaTheme.colors.hairline)
                             }
                         }
                     }
                 }
 
                 1 -> {
-                    // User Bookmarks
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.fillMaxWidth()
@@ -255,14 +255,14 @@ fun BookmarksAndTocBottomSheet(
                         OutlinedTextField(
                             value = newBookmarkTitle,
                             onValueChange = { newBookmarkTitle = it },
-                            placeholder = { Text("Bookmark Page ${currentPage + 1}…") },
+                            placeholder = { Text(stringResource(R.string.reader_bookmark_title_hint)) },
                             singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("bookmark_title_input")
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(s.sm))
                         Button(
                             onClick = {
                                 onAddBookmark(currentPage, newBookmarkTitle)
@@ -270,27 +270,27 @@ fun BookmarksAndTocBottomSheet(
                             },
                             modifier = Modifier.testTag("add_bookmark_confirm_button")
                         ) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Add")
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(sz.searchIcon))
+                            Spacer(modifier = Modifier.width(s.xs))
+                            Text(stringResource(R.string.action_save))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-                    HorizontalDivider()
+                    Spacer(modifier = Modifier.height(s.md))
+                    HorizontalDivider(color = TeenaTheme.colors.hairline)
 
                     if (bookmarks.isEmpty()) {
                         Text(
-                            text = "No bookmarks saved in this PDF yet. Add one above for Page ${currentPage + 1}.",
+                            text = stringResource(R.string.empty_bookmarks_subtitle),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
+                            modifier = Modifier.padding(vertical = s.xl)
                         )
                     } else {
                         LazyColumn(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(max = 300.dp)
+                                .heightIn(max = sz.sheetListMaxHeight)
                         ) {
                             items(bookmarks, key = { it.id }) { bm ->
                                 Row(
@@ -300,7 +300,7 @@ fun BookmarksAndTocBottomSheet(
                                             onJumpToPage(bm.pageIndex)
                                             onDismiss()
                                         }
-                                        .padding(vertical = 10.dp),
+                                        .padding(vertical = s.sm),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Icon(
@@ -308,14 +308,14 @@ fun BookmarksAndTocBottomSheet(
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary
                                     )
-                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Spacer(modifier = Modifier.width(s.md))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = bm.title,
                                             style = MaterialTheme.typography.titleSmall
                                         )
                                         Text(
-                                            text = "Page ${bm.pageIndex + 1}",
+                                            text = stringResource(R.string.page_badge_short, bm.pageIndex + 1),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -329,80 +329,88 @@ fun BookmarksAndTocBottomSheet(
                                         Icon(
                                             imageVector = Icons.Filled.Edit,
                                             contentDescription = stringResource(R.string.reader_edit_bookmark),
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(sz.searchIcon)
                                         )
                                     }
                                     IconButton(onClick = { onDeleteBookmark(bm.id) }) {
                                         Icon(
                                             imageVector = Icons.Filled.DeleteOutline,
                                             contentDescription = stringResource(R.string.action_delete),
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(sz.searchIcon)
                                         )
                                     }
                                 }
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                HorizontalDivider(color = TeenaTheme.colors.hairline)
                             }
                         }
                     }
                 }
 
                 else -> {
-                    // Browser-like Jump & Visited History
                     val reversedHistory = visitedHistory.reversed()
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 320.dp)
-                    ) {
-                        items(reversedHistory.size) { idx ->
-                            val pageIdx = reversedHistory[idx]
-                            val matchingChapter = tocEntries.lastOrNull { it.pageIndex <= pageIdx }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onJumpToPage(pageIdx)
-                                        onDismiss()
-                                    }
-                                    .padding(vertical = 11.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.History,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "Page ${pageIdx + 1}",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = if (idx == 0) FontWeight.Bold else FontWeight.Normal
+                    if (reversedHistory.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.reader_no_jump_history),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = s.xl)
+                        )
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = sz.sheetListMaxHeight)
+                        ) {
+                            items(reversedHistory.size) { idx ->
+                                val pageIdx = reversedHistory[idx]
+                                val matchingChapter = tocEntries.lastOrNull { it.pageIndex <= pageIdx }
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            onJumpToPage(pageIdx)
+                                            onDismiss()
+                                        }
+                                        .padding(vertical = s.md)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.History,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
-                                    if (matchingChapter != null) {
+                                    Spacer(modifier = Modifier.width(s.md))
+                                    Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = matchingChapter.title,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            text = stringResource(R.string.page_badge_short, pageIdx + 1),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = if (idx == 0) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                        if (matchingChapter != null) {
+                                            Text(
+                                                text = matchingChapter.title,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    if (idx == 0) {
+                                        Text(
+                                            text = stringResource(R.string.reader_current_page_label, pageIdx + 1),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     }
                                 }
-                                if (idx == 0) {
-                                    Text(
-                                        text = "Current",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
+                                HorizontalDivider(color = TeenaTheme.colors.hairline)
                             }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 
@@ -437,9 +445,6 @@ fun BookmarksAndTocBottomSheet(
     }
 }
 
-/**
- * MJ PDF v3.1's signature "Every Tool, One Tap Away" Unified Reader Menu Sheet.
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun QuickToolsBottomSheet(
@@ -466,12 +471,15 @@ fun QuickToolsBottomSheet(
     onPrintPdf: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
                 text = stringResource(R.string.reader_tools),
@@ -479,58 +487,59 @@ fun QuickToolsBottomSheet(
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "${state.documentTitle}  •  Page ${state.currentPage + 1} of ${state.pageCount}",
+                text = "${state.documentTitle}  ·  ${stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1))}",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(s.lg))
 
-            // 1. "Every Tool, One Tap Away" Action Grid (3 columns x 4 rows)
             val toolActions = listOf(
-                ToolGridTile(Icons.Filled.Search, "Search PDF", state.isSearchBarVisible) {
+                ToolGridTile(Icons.Filled.Search, stringResource(R.string.reader_search_in_pdf), state.isSearchBarVisible) {
                     onDismiss()
                     onOpenSearch()
                 },
-                ToolGridTile(Icons.AutoMirrored.Filled.Toc, "Contents & TOC", false) {
+                ToolGridTile(Icons.AutoMirrored.Filled.Toc, stringResource(R.string.reader_bookmarks), false) {
                     onDismiss()
                     onOpenTocAndBookmarks()
                 },
-                ToolGridTile(Icons.AutoMirrored.Filled.Subject, "Text Mode", false) {
+                ToolGridTile(Icons.AutoMirrored.Filled.Subject, stringResource(R.string.reader_text_mode), false) {
                     onDismiss()
                     onOpenTextMode()
                 },
-                ToolGridTile(Icons.Filled.Highlight, "Notes & Marks", state.annotations.isNotEmpty()) {
+                ToolGridTile(Icons.Filled.Highlight, stringResource(R.string.reader_annotations), state.annotations.isNotEmpty()) {
                     onDismiss()
                     onOpenAnnotations()
                 },
-                ToolGridTile(Icons.Filled.Draw, "Sign PDF", false) {
+                ToolGridTile(Icons.Filled.Draw, stringResource(R.string.reader_sign_pdf), false) {
                     onDismiss()
                     onOpenSignaturePad()
                 },
-                ToolGridTile(Icons.Filled.FormatQuote, "Share Quote", false) {
+                ToolGridTile(Icons.Filled.FormatQuote, stringResource(R.string.reader_share_quote), false) {
                     onDismiss()
                     onOpenShareQuote()
                 },
-                ToolGridTile(Icons.Filled.CropFree, "Hide Margins", state.hideMargins) {
+                ToolGridTile(Icons.Filled.CropFree, stringResource(R.string.reader_hide_margins), state.hideMargins) {
                     onToggleHideMargins()
                 },
-                ToolGridTile(Icons.Filled.Link, "Links (${state.documentLinks.size})", state.documentLinks.isNotEmpty()) {
+                ToolGridTile(Icons.Filled.Link, "${stringResource(R.string.reader_links)} (${state.documentLinks.size})", state.documentLinks.isNotEmpty()) {
                     onDismiss()
                     onOpenDocumentLinks()
                 },
-                ToolGridTile(Icons.Filled.Policy, "Incognito", state.incognitoMode) {
+                ToolGridTile(Icons.Filled.Policy, stringResource(R.string.incognito_mode), state.incognitoMode) {
                     onToggleIncognito()
                 },
-                ToolGridTile(Icons.Filled.ScreenRotation, "Rotate", false) {
+                ToolGridTile(Icons.Filled.ScreenRotation, stringResource(R.string.reader_rotate), false) {
                     onDismiss()
                     onRotateScreen()
                 },
-                ToolGridTile(Icons.Filled.Share, "Share File", false) {
+                ToolGridTile(Icons.Filled.Share, stringResource(R.string.action_share), false) {
                     onDismiss()
                     onSharePdf()
                 },
-                ToolGridTile(Icons.Filled.Print, "Print PDF", false) {
+                ToolGridTile(Icons.Filled.Print, stringResource(R.string.action_print), false) {
                     onDismiss()
                     onPrintPdf()
                 }
@@ -538,10 +547,10 @@ fun QuickToolsBottomSheet(
 
             toolActions.chunked(3).forEach { rowItems ->
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(s.sm),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp)
+                        .padding(vertical = s.xs)
                 ) {
                     rowItems.forEach { tile ->
                         ToolGridButton(
@@ -552,17 +561,16 @@ fun QuickToolsBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.lg))
+            HorizontalDivider(color = TeenaTheme.colors.hairline)
+            Spacer(modifier = Modifier.height(s.md))
 
-            // 2. Unified Reading Modes (Vertical, Horizontal, Single-Page Book Flip, Dual-Page)
             Text(
                 text = stringResource(R.string.reader_layout_mode),
                 style = MaterialTheme.typography.labelLarge
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(modifier = Modifier.height(s.sm))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                 items(ScrollLayoutMode.entries) { mode ->
                     FilterChip(
                         selected = state.layoutMode == mode,
@@ -572,15 +580,14 @@ fun QuickToolsBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // 3. Page Fit Policies (Fit Width, Fit Height, Whole Page)
             Text(
                 text = stringResource(R.string.reader_fit_policy),
                 style = MaterialTheme.typography.labelLarge
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(modifier = Modifier.height(s.sm))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                 items(PageFitPolicy.entries) { policy ->
                     FilterChip(
                         selected = state.pageFitPolicy == policy,
@@ -590,15 +597,14 @@ fun QuickToolsBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // 4. PDF Page Theme (Original, Dark Mode, Sepia, High Contrast)
             Text(
                 text = stringResource(R.string.reader_color_mode),
                 style = MaterialTheme.typography.labelLarge
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(modifier = Modifier.height(s.sm))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                 items(PdfColorMode.entries) { colorMode ->
                     FilterChip(
                         selected = state.colorMode == colorMode,
@@ -608,15 +614,14 @@ fun QuickToolsBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // 5. Reading Status (5 statuses including Abandoned)
             Text(
                 text = stringResource(R.string.change_reading_status),
                 style = MaterialTheme.typography.labelLarge
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Spacer(modifier = Modifier.height(s.sm))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                 items(ReadingStatus.entries) { status ->
                     FilterChip(
                         selected = state.readingStatus == status,
@@ -626,13 +631,13 @@ fun QuickToolsBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider()
+            Spacer(modifier = Modifier.height(s.md))
+            HorizontalDivider(color = TeenaTheme.colors.hairline)
 
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = s.sm),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -643,7 +648,7 @@ fun QuickToolsBottomSheet(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = s.sm),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
@@ -651,19 +656,18 @@ fun QuickToolsBottomSheet(
                 Switch(checked = keepScreenOn, onCheckedChange = onToggleKeepScreenOn)
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // Document metadata & Settings entry card
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                shape = RoundedCornerShape(14.dp),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(14.dp)
+                        .padding(s.lg)
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -671,9 +675,9 @@ fun QuickToolsBottomSheet(
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.primary
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(s.xxs))
                         Text(
-                            text = "${state.folderName}  •  ${formatFileSize(state.fileSizeBytes)}  •  Zoom ${String.format("%.1fx", state.zoomScale)}",
+                            text = "${state.folderName}  ·  ${formatFileSize(state.fileSizeBytes)}  ·  ${String.format(Locale.US, "%.1fx", state.zoomScale)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -684,14 +688,14 @@ fun QuickToolsBottomSheet(
                             onOpenSettings()
                         }
                     ) {
-                        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.nav_settings))
+                        Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(sz.iconSm))
+                        Spacer(modifier = Modifier.width(s.xs))
+                        Text(stringResource(R.string.menu_settings))
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 }
@@ -708,6 +712,8 @@ private fun ToolGridButton(
     tile: ToolGridTile,
     modifier: Modifier = Modifier
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     val bgColor = if (tile.isActive) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
@@ -721,14 +727,14 @@ private fun ToolGridButton(
 
     Surface(
         onClick = tile.onClick,
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = bgColor,
         contentColor = fgColor,
         modifier = modifier
-            .height(68.dp)
+            .height(sz.toolTileHeight)
             .then(
                 if (tile.isActive) {
-                    Modifier.border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(12.dp))
+                    Modifier.border(sz.hairline, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium)
                 } else {
                     Modifier
                 }
@@ -737,14 +743,14 @@ private fun ToolGridButton(
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
+            modifier = Modifier.padding(horizontal = s.sm, vertical = s.sm)
         ) {
             Icon(
                 imageVector = tile.icon,
                 contentDescription = tile.label,
-                modifier = Modifier.size(21.dp)
+                modifier = Modifier.size(sz.iconTool)
             )
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(s.xs))
             Text(
                 text = tile.label,
                 style = MaterialTheme.typography.labelSmall,

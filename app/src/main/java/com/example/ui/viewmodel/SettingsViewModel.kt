@@ -88,6 +88,7 @@ class SettingsViewModel(
 
     fun clearRenderCache(onDone: () -> Unit) = viewModelScope.launch {
         pdfEngine.clearMemoryAndDiskCache()
+        com.example.ui.components.ThumbnailCache.clear()
         onDone()
     }
 

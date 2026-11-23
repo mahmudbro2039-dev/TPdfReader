@@ -24,12 +24,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.ui.screens.HomeScreen
+import com.example.ui.model.toThemeMode
 import com.example.ui.screens.ReaderScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.TeenaApp
 import com.example.ui.screens.TextModeScreen
-import com.example.ui.theme.MjPdfTheme
-import com.example.ui.viewmodel.HomeViewModel
+import com.example.ui.theme.TeenaTheme
+import com.example.ui.viewmodel.AppViewModel
 import com.example.ui.viewmodel.ReaderViewModel
 import com.example.ui.viewmodel.SettingsViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,7 +53,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         setContent {
-            MjPdfApp(
+            TeenaRoot(
                 appContainer = appContainer,
                 incomingPdfUriFlow = incomingExternalPdfUri,
                 onConsumeIncomingUri = { incomingExternalPdfUri.value = null },
@@ -107,7 +108,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun MjPdfApp(
+private fun TeenaRoot(
     appContainer: AppContainer,
     incomingPdfUriFlow: MutableStateFlow<Uri?>,
     onConsumeIncomingUri: () -> Unit,
@@ -116,10 +117,11 @@ private fun MjPdfApp(
     onSharePdf: (String, String) -> Unit,
     onPrintPdf: (String, String) -> Unit
 ) {
-    val homeViewModel: HomeViewModel = viewModel(
-        factory = HomeViewModel.factory(
+    val appViewModel: AppViewModel = viewModel(
+        factory = AppViewModel.factory(
             libraryRepository = appContainer.libraryRepository,
-            preferencesRepository = appContainer.preferencesRepository
+            preferencesRepository = appContainer.preferencesRepository,
+            pdfTextExtractor = appContainer.pdfTextExtractor
         )
     )
     val readerViewModel: ReaderViewModel = viewModel(
@@ -155,22 +157,20 @@ private fun MjPdfApp(
         contract = ActivityResultContracts.OpenDocument()
     ) { pickedUri ->
         if (pickedUri != null) {
-            homeViewModel.importAndOpenPdf(pickedUri) { importedUri ->
+            appViewModel.importAndOpenPdf(pickedUri) { importedUri ->
                 navigateToReader(importedUri)
             }
         }
     }
 
-    // Handle external PDF VIEW intents directly in the Reader
     LaunchedEffect(incomingUri) {
         val uri = incomingUri ?: return@LaunchedEffect
-        homeViewModel.importAndOpenPdf(uri) { importedUri ->
+        appViewModel.importAndOpenPdf(uri) { importedUri ->
             navigateToReader(importedUri)
         }
         onConsumeIncomingUri()
     }
 
-    // Wire volume key navigation when Reader or Text Mode is active
     LaunchedEffect(isOnReaderOrTextRoute, preferences.volumeKeyNavigation) {
         if (isOnReaderOrTextRoute && preferences.volumeKeyNavigation) {
             onRegisterVolumeHandler { keyCode ->
@@ -191,19 +191,16 @@ private fun MjPdfApp(
         }
     }
 
-    MjPdfTheme(
-        themeMode = preferences.appThemeMode,
-        dynamicColor = preferences.dynamicColor
-    ) {
+    TeenaTheme(mode = preferences.appThemeMode.toThemeMode()) {
         NavHost(
             navController = navController,
             startDestination = ROUTE_HOME
         ) {
             composable(ROUTE_HOME) {
                 LaunchedEffect(Unit) { isOnReaderOrTextRoute = false }
-                HomeScreen(
-                    viewModel = homeViewModel,
-                    onPickPdfClick = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
+                TeenaApp(
+                    viewModel = appViewModel,
+                    onPickPdf = { pdfPickerLauncher.launch(arrayOf("application/pdf")) },
                     onOpenDocument = { uriString, pageIndex ->
                         navigateToReader(uriString, pageIndex)
                     },

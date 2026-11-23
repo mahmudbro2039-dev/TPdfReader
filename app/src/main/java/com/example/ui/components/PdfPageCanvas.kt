@@ -26,7 +26,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,12 +53,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import com.example.data.local.AnnotationEntity
 import com.example.data.model.AnnotationType
 import com.example.data.model.PageFitPolicy
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.PdfPageDimension
+import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.ReaderUiState
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -95,7 +94,6 @@ fun PdfDocumentViewport(
             .pointerInput(state.isZoomLocked, state.zoomScale, state.layoutMode, state.isRtl) {
                 detectTapGestures(
                     onTap = { tapOffset ->
-                        // In Single Page (Book Flip) mode, left/right 22% edge taps turn pages like an e-reader
                         if (state.layoutMode == ScrollLayoutMode.SINGLE_PAGE && state.zoomScale <= 1.05f) {
                             val leftZone = size.width * 0.22f
                             val rightZone = size.width * 0.78f
@@ -212,6 +210,7 @@ private fun VerticalPdfViewer(
     onStopAutoScroll: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val s = TeenaTheme.spacing
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = state.currentPage)
 
     LaunchedEffect(state.pendingScrollTargetPage) {
@@ -246,10 +245,10 @@ private fun VerticalPdfViewer(
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(
-            horizontal = if (pageGapSpacing && !state.hideMargins) 8.dp else 0.dp,
-            vertical = if (pageGapSpacing) 12.dp else 0.dp
+            horizontal = if (pageGapSpacing && !state.hideMargins) s.sm else s.none,
+            vertical = if (pageGapSpacing) s.md else s.none
         ),
-        verticalArrangement = Arrangement.spacedBy(if (pageGapSpacing) 10.dp else 0.dp),
+        verticalArrangement = Arrangement.spacedBy(if (pageGapSpacing) s.md else s.none),
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
     ) {
@@ -290,6 +289,7 @@ private fun HorizontalPdfViewer(
     onStopAutoScroll: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val s = TeenaTheme.spacing
     val pagerState = rememberPagerState(
         initialPage = state.currentPage.coerceIn(0, (state.pageCount - 1).coerceAtLeast(0)),
         pageCount = { state.pageCount.coerceAtLeast(1) }
@@ -339,8 +339,8 @@ private fun HorizontalPdfViewer(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(
-                    horizontal = if (state.hideMargins) 2.dp else 8.dp,
-                    vertical = if (state.hideMargins) 4.dp else 12.dp
+                    horizontal = if (state.hideMargins) s.xxs else s.sm,
+                    vertical = if (state.hideMargins) s.xs else s.md
                 )
         ) {
             PdfPageSurface(
@@ -375,6 +375,7 @@ private fun DualPagePdfViewer(
     onStopAutoScroll: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val s = TeenaTheme.spacing
     val spreadCount = ((state.pageCount + 1) / 2).coerceAtLeast(1)
     val pagerState = rememberPagerState(
         initialPage = (state.currentPage / 2).coerceIn(0, spreadCount - 1),
@@ -424,10 +425,10 @@ private fun DualPagePdfViewer(
 
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(s.xs, Alignment.CenterHorizontally),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 6.dp, vertical = 10.dp)
+                .padding(horizontal = s.sm, vertical = s.md)
         ) {
             if (leftPage < state.pageCount) {
                 val dim = state.pageDimensions.getOrElse(leftPage) { PdfPageDimension(595, 842) }
@@ -484,6 +485,10 @@ private fun PdfPageSurface(
     renderPage: suspend (Int, Int) -> Bitmap?,
     modifier: Modifier = Modifier
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val readerColors = TeenaTheme.colors.reader
+
     var bitmap by remember(uriString, pageIndex, targetWidthPx, hideMargins) {
         mutableStateOf<Bitmap?>(null)
     }
@@ -505,8 +510,8 @@ private fun PdfPageSurface(
     }
 
     Surface(
-        color = Color.White,
-        shadowElevation = 3.dp,
+        color = readerColors.pagePaper,
+        shadowElevation = sz.cardElevation,
         modifier = modifier.aspectRatio(dynamicAspectRatio)
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -527,20 +532,18 @@ private fun PdfPageSurface(
                 }
             }
 
-            // Visual Bookmark Ribbon on bookmarked pages
             if (isBookmarked) {
                 Icon(
                     imageVector = Icons.Filled.Bookmark,
                     contentDescription = "Bookmarked Page",
-                    tint = Color(0xFFB91C1C),
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
-                        .padding(end = 14.dp)
-                        .size(28.dp)
+                        .padding(end = s.md)
+                        .size(sz.bookmarkRibbon)
                 )
             }
 
-            // Visual Annotation / Signature Overlays stamped on this page
             val signatures = pageAnnotations.filter {
                 it.annotationType == AnnotationType.SIGNATURE && it.signatureVectorData.isNotBlank()
             }
@@ -550,26 +553,26 @@ private fun PdfPageSurface(
 
             if (highlightsAndNotes.isNotEmpty()) {
                 Column(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(s.xs),
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(10.dp)
+                        .padding(s.md)
                 ) {
                     highlightsAndNotes.take(2).forEach { ann ->
-                        val swatch = parseHexColor(ann.colorHex)
+                        val swatch = parseHexColor(ann.colorHex, readerColors.highlightDefault)
                         Surface(
                             color = swatch.copy(alpha = 0.9f),
-                            shape = RoundedCornerShape(6.dp),
-                            shadowElevation = 1.dp
+                            shape = MaterialTheme.shapes.extraSmall,
+                            shadowElevation = sz.hairline
                         ) {
                             Text(
                                 text = ann.noteText.ifBlank { ann.quotedText }.take(42),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color.Black,
+                                color = readerColors.textLightFg,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = s.sm, vertical = s.xs)
                             )
                         }
                     }
@@ -579,30 +582,34 @@ private fun PdfPageSurface(
             if (signatures.isNotEmpty()) {
                 val latestSig = signatures.first()
                 Surface(
-                    color = Color.White.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(8.dp),
+                    color = readerColors.pagePaper.copy(alpha = 0.88f),
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(16.dp)
-                        .border(1.dp, Color(0xFFB91C1C).copy(alpha = 0.45f), RoundedCornerShape(8.dp))
+                        .padding(s.lg)
+                        .border(
+                            width = sz.hairline,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                            shape = MaterialTheme.shapes.small
+                        )
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
                     ) {
                         VectorSignaturePreview(
                             signatureVectorData = latestSig.signatureVectorData,
-                            strokeColor = Color(0xFF991B1B),
-                            strokeWidthDp = 2.4f,
+                            strokeColor = MaterialTheme.colorScheme.primary,
+                            strokeWidth = sz.strokeWidth,
                             modifier = Modifier
-                                .width(116.dp)
-                                .height(38.dp)
+                                .width(sz.signatureStampWidth)
+                                .height(sz.signatureStampHeight)
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
+                        Spacer(modifier = Modifier.height(s.xxs))
                         Text(
                             text = latestSig.quotedText.take(22),
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF7F1D1D)
+                            color = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -614,7 +621,7 @@ private fun PdfPageSurface(
 @Composable
 private fun ColumnPagePlaceholder(pageNumber: Int) {
     Box(contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(strokeWidth = 2.dp)
+        CircularProgressIndicator(strokeWidth = TeenaTheme.sizes.borderThick)
         Text(
             text = "$pageNumber",
             style = MaterialTheme.typography.labelSmall,

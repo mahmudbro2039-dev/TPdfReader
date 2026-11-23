@@ -20,17 +20,17 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.FormatQuote
-import androidx.compose.material.icons.filled.FormatSize
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.FormatQuote
+import androidx.compose.material.icons.rounded.FormatSize
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -60,28 +60,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.TextFontChoice
 import com.example.data.model.TextModeTheme
 import com.example.ui.components.ShareQuoteBottomSheet
-import com.example.ui.theme.DraculaAccent
-import com.example.ui.theme.DraculaBg
-import com.example.ui.theme.DraculaFg
-import com.example.ui.theme.DraculaSurface
-import com.example.ui.theme.JetBrainsMonoFamily
-import com.example.ui.theme.NewsreaderFamily
-import com.example.ui.theme.PlusJakartaSansFamily
-import com.example.ui.theme.TextModeDarkBg
-import com.example.ui.theme.TextModeDarkFg
-import com.example.ui.theme.TextModeLightBg
-import com.example.ui.theme.TextModeLightFg
-import com.example.ui.theme.TextModeSepiaBg
-import com.example.ui.theme.TextModeSepiaFg
+import com.example.ui.theme.TeenaTheme
+import com.example.ui.theme.readerTextModeStyle
 import com.example.ui.viewmodel.ReaderViewModel
 import kotlinx.coroutines.launch
 
@@ -99,22 +85,47 @@ fun TextModeScreen(
     var showStyleSheet by remember { mutableStateOf(false) }
     var showShareQuoteSheet by remember { mutableStateOf(false) }
 
+    val s = TeenaTheme.spacing
+    val readerColors = TeenaTheme.colors.reader
+    val cs = MaterialTheme.colorScheme
+
     LaunchedEffect(state.uriString) {
         viewModel.ensureTextExtracted()
     }
 
     val (bgColor, fgColor, accentColor, barColor) = when (prefs.textModeTheme) {
-        TextModeTheme.LIGHT -> QuadColors(TextModeLightBg, TextModeLightFg, MaterialTheme.colorScheme.primary, Color(0xFFF3F1EC))
-        TextModeTheme.SEPIA -> QuadColors(TextModeSepiaBg, TextModeSepiaFg, Color(0xFF8C5000), Color(0xFFEAE0C8))
-        TextModeTheme.DARK -> QuadColors(TextModeDarkBg, TextModeDarkFg, MaterialTheme.colorScheme.primary, Color(0xFF1E1E22))
-        TextModeTheme.DRACULA -> QuadColors(DraculaBg, DraculaFg, DraculaAccent, DraculaSurface)
+        TextModeTheme.LIGHT -> QuadColors(
+            readerColors.textLightBg,
+            readerColors.textLightFg,
+            cs.primary,
+            readerColors.textLightSurface
+        )
+        TextModeTheme.SEPIA -> QuadColors(
+            readerColors.textSepiaBg,
+            readerColors.textSepiaFg,
+            readerColors.textSepiaAccent,
+            readerColors.textSepiaSurface
+        )
+        TextModeTheme.DARK -> QuadColors(
+            readerColors.textDarkBg,
+            readerColors.textDarkFg,
+            cs.primary,
+            readerColors.textDarkSurface
+        )
+        TextModeTheme.DRACULA -> QuadColors(
+            readerColors.draculaBg,
+            readerColors.draculaFg,
+            readerColors.draculaAccent,
+            readerColors.draculaSurface
+        )
     }
 
-    val fontFamily = when (prefs.textModeFontChoice) {
-        TextFontChoice.SANS -> PlusJakartaSansFamily
-        TextFontChoice.SERIF -> NewsreaderFamily
-        TextFontChoice.MONO -> JetBrainsMonoFamily
-    }
+    val useSerif = prefs.textModeFontChoice == TextFontChoice.SERIF
+    val bodyStyle = readerTextModeStyle(
+        useSerif = useSerif,
+        fontSizeSp = prefs.textModeFontSizeSp,
+        lineHeightMultiplier = prefs.textModeLineHeightMultiplier
+    )
 
     val currentText = state.extractedTextPages.getOrElse(state.currentPage) { "" }
     val copiedMessage = stringResource(R.string.text_mode_copied)
@@ -139,7 +150,7 @@ fun TextModeScreen(
                             .testTag("text_mode_back_button")
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = stringResource(R.string.action_back)
                         )
                     }
@@ -149,11 +160,11 @@ fun TextModeScreen(
                         Text(
                             text = stringResource(R.string.text_mode_title),
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
+                            maxLines = 1
                         )
                         Text(
                             text = state.documentTitle,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.bodySmall,
                             color = fgColor.copy(alpha = 0.7f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -167,7 +178,7 @@ fun TextModeScreen(
                             .minimumInteractiveComponentSize()
                             .testTag("text_mode_quote_button")
                     ) {
-                        Icon(Icons.Filled.FormatQuote, contentDescription = stringResource(R.string.text_mode_share_quote))
+                        Icon(Icons.Rounded.FormatQuote, contentDescription = stringResource(R.string.text_mode_share_quote))
                     }
                     IconButton(
                         onClick = {
@@ -179,7 +190,7 @@ fun TextModeScreen(
                         },
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.text_mode_copy))
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = stringResource(R.string.text_mode_copy))
                     }
                     IconButton(
                         onClick = {
@@ -194,7 +205,7 @@ fun TextModeScreen(
                         },
                         modifier = Modifier.minimumInteractiveComponentSize()
                     ) {
-                        Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.text_mode_share))
+                        Icon(Icons.Rounded.Share, contentDescription = stringResource(R.string.text_mode_share))
                     }
                     IconButton(
                         onClick = { showStyleSheet = true },
@@ -202,7 +213,7 @@ fun TextModeScreen(
                             .minimumInteractiveComponentSize()
                             .testTag("text_mode_style_button")
                     ) {
-                        Icon(Icons.Filled.FormatSize, contentDescription = stringResource(R.string.text_mode_appearance))
+                        Icon(Icons.Rounded.FormatSize, contentDescription = stringResource(R.string.text_mode_appearance))
                     }
                 }
             )
@@ -213,7 +224,7 @@ fun TextModeScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                        .padding(horizontal = s.lg, vertical = s.sm),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
@@ -224,13 +235,17 @@ fun TextModeScreen(
                             .minimumInteractiveComponentSize()
                             .testTag("text_mode_prev_page")
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Previous page")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                            contentDescription = stringResource(R.string.text_mode_prev_page)
+                        )
                     }
 
                     Text(
-                        text = "Page ${state.currentPage + 1} of ${state.pageCount.coerceAtLeast(1)}  •  ${prefs.textModeTheme.label}",
+                        text = stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1)),
                         style = MaterialTheme.typography.labelLarge,
-                        color = accentColor
+                        color = accentColor,
+                        maxLines = 1
                     )
 
                     IconButton(
@@ -240,7 +255,10 @@ fun TextModeScreen(
                             .minimumInteractiveComponentSize()
                             .testTag("text_mode_next_page")
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Next page")
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                            contentDescription = stringResource(R.string.text_mode_next_page)
+                        )
                     }
                 }
             }
@@ -265,19 +283,19 @@ fun TextModeScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(scrollState)
-                        .padding(horizontal = 24.dp, vertical = 22.dp)
+                        .padding(horizontal = s.xl, vertical = s.xl)
                 ) {
                     if (currentText.isBlank()) {
                         Surface(
                             color = barColor,
-                            shape = RoundedCornerShape(14.dp),
+                            shape = MaterialTheme.shapes.medium,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
                                 text = stringResource(R.string.text_mode_empty_page),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = fgColor.copy(alpha = 0.8f),
-                                modifier = Modifier.padding(18.dp)
+                                modifier = Modifier.padding(s.lg)
                             )
                         }
                     } else {
@@ -285,13 +303,11 @@ fun TextModeScreen(
                             Text(
                                 text = currentText,
                                 color = fgColor,
-                                fontFamily = fontFamily,
-                                fontSize = prefs.textModeFontSizeSp.sp,
-                                lineHeight = (prefs.textModeFontSizeSp * prefs.textModeLineHeightMultiplier).sp
+                                style = bodyStyle
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(32.dp))
+                    Spacer(modifier = Modifier.height(s.xxl))
                 }
             }
         }
@@ -308,76 +324,75 @@ fun TextModeScreen(
     }
 
     if (showStyleSheet) {
-        ModalBottomSheet(onDismissRequest = { showStyleSheet = false }) {
+        ModalBottomSheet(
+            onDismissRequest = { showStyleSheet = false },
+            containerColor = cs.surface,
+            shape = MaterialTheme.shapes.extraLarge
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                    .padding(horizontal = s.lg, vertical = s.sm),
+                verticalArrangement = Arrangement.spacedBy(s.md)
             ) {
                 Text(
                     text = stringResource(R.string.text_mode_appearance),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.titleLarge
                 )
-                Spacer(modifier = Modifier.height(14.dp))
 
-                Text("Theme", style = MaterialTheme.typography.labelLarge)
-                Spacer(modifier = Modifier.height(6.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(TextModeTheme.entries) { theme ->
+                Text(stringResource(R.string.text_mode_theme), style = MaterialTheme.typography.labelLarge)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+                    items(
+                        items = TextModeTheme.entries,
+                        key = { it.name },
+                        contentType = { "text_theme" }
+                    ) { theme ->
                         FilterChip(
                             selected = prefs.textModeTheme == theme,
                             onClick = { viewModel.setTextModeTheme(theme) },
-                            label = { Text(theme.label) }
+                            label = { Text(theme.label) },
+                            shape = CircleShape
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Text("Font Family", style = MaterialTheme.typography.labelLarge)
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextFontChoice.entries.forEach { choice ->
-                        FilterChip(
-                            selected = prefs.textModeFontChoice == choice,
-                            onClick = { viewModel.setTextModeFontChoice(choice) },
-                            label = { Text(choice.label) }
-                        )
-                    }
+                Text(stringResource(R.string.text_mode_font), style = MaterialTheme.typography.labelLarge)
+                Row(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+                    FilterChip(
+                        selected = !useSerif,
+                        onClick = { viewModel.setTextModeFontChoice(TextFontChoice.SANS) },
+                        label = { Text(stringResource(R.string.text_mode_font_sans)) },
+                        shape = CircleShape
+                    )
+                    FilterChip(
+                        selected = useSerif,
+                        onClick = { viewModel.setTextModeFontChoice(TextFontChoice.SERIF) },
+                        label = { Text(stringResource(R.string.text_mode_font_serif)) },
+                        shape = CircleShape
+                    )
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Font Size", style = MaterialTheme.typography.labelLarge)
-                    Text("${prefs.textModeFontSizeSp.toInt()} sp", style = MaterialTheme.typography.labelSmall)
-                }
+                Text(
+                    text = stringResource(R.string.text_mode_font_size, prefs.textModeFontSizeSp.toInt()),
+                    style = MaterialTheme.typography.labelLarge
+                )
                 Slider(
                     value = prefs.textModeFontSizeSp,
                     onValueChange = viewModel::setTextModeFontSize,
                     valueRange = 13f..28f
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Line Spacing", style = MaterialTheme.typography.labelLarge)
-                    Text(String.format("%.1fx", prefs.textModeLineHeightMultiplier), style = MaterialTheme.typography.labelSmall)
-                }
+                Text(
+                    text = stringResource(R.string.text_mode_line_spacing, prefs.textModeLineHeightMultiplier),
+                    style = MaterialTheme.typography.labelLarge
+                )
                 Slider(
                     value = prefs.textModeLineHeightMultiplier,
                     onValueChange = viewModel::setTextModeLineHeight,
                     valueRange = 1.2f..2.2f
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(s.lg))
             }
         }
     }

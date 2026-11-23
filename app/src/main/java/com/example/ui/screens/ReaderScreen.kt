@@ -26,7 +26,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Redo
@@ -87,7 +86,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -105,9 +103,11 @@ import com.example.ui.components.ShareQuoteBottomSheet
 import com.example.ui.components.SignaturePadBottomSheet
 import com.example.ui.components.pdfColorFilterFor
 import com.example.ui.components.readerCanvasColorFor
+import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.ReaderLoadState
 import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.ReaderViewModel
+import java.util.Locale
 import kotlin.math.roundToInt
 
 @Composable
@@ -122,6 +122,7 @@ fun ReaderScreen(
     onSharePdf: (uri: String, title: String) -> Unit,
     onPrintPdf: (uri: String, title: String) -> Unit
 ) {
+    val s = TeenaTheme.spacing
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     val view = LocalView.current
@@ -223,29 +224,33 @@ fun ReaderScreen(
                     onStopAutoScroll = viewModel::stopAutoScroll
                 )
 
-                // Full-screen Floating Page & Progress Pill
                 if (prefs.showPageIndicatorPill && !state.isChromeVisible) {
-                    val progressPct = if (state.pageCount <= 1) 100 else (((state.currentPage + 1) * 100) / state.pageCount)
+                    val progressPct = if (state.pageCount <= 0) {
+                        0
+                    } else {
+                        ((state.currentPage + 1).toFloat() / state.pageCount.toFloat() * 100f)
+                            .coerceIn(0f, 100f)
+                            .roundToInt()
+                    }
                     Surface(
                         onClick = { showGoToPageDialog = true },
-                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.82f),
+                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.84f),
                         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                        shape = RoundedCornerShape(20.dp),
+                        shape = MaterialTheme.shapes.large,
                         modifier = Modifier
                             .align(Alignment.BottomStart)
                             .navigationBarsPadding()
-                            .padding(start = 16.dp, bottom = 16.dp)
+                            .padding(start = s.screenH, bottom = s.screenH)
                             .testTag("floating_page_pill")
                     ) {
                         Text(
-                            text = "${state.currentPage + 1} / ${state.pageCount.coerceAtLeast(1)}  •  $progressPct%",
+                            text = "${state.currentPage + 1} / ${state.pageCount.coerceAtLeast(1)}  ·  $progressPct%",
                             style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
                         )
                     }
                 }
 
-                // MJ PDF v3.1 Floating Edge Shortcut Pills
                 if (prefs.showEdgeShortcutButtons) {
                     FloatingEdgeShortcuts(
                         isZoomLocked = state.isZoomLocked,
@@ -261,11 +266,10 @@ fun ReaderScreen(
                         onCycleColorMode = viewModel::cycleColorMode,
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .padding(end = 10.dp)
+                            .padding(end = s.sm)
                     )
                 }
 
-                // Floating Auto-Scroll Speed Controller Pill
                 AnimatedVisibility(
                     visible = state.isAutoScrollActive,
                     enter = fadeIn(),
@@ -273,7 +277,7 @@ fun ReaderScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .navigationBarsPadding()
-                        .padding(bottom = if (state.isChromeVisible) 136.dp else 20.dp)
+                        .padding(bottom = if (state.isChromeVisible) s.readerBarClearance else s.xl)
                 ) {
                     AutoScrollControlPill(
                         speed = state.autoScrollSpeed,
@@ -283,14 +287,13 @@ fun ReaderScreen(
                     )
                 }
 
-                // Floating Brightness Overlay Slider
                 AnimatedVisibility(
                     visible = state.isBrightnessOverlayVisible,
                     enter = fadeIn(),
                     exit = fadeOut(),
                     modifier = Modifier
                         .align(Alignment.Center)
-                        .padding(horizontal = 28.dp)
+                        .padding(horizontal = s.xl)
                 ) {
                     BrightnessControlOverlay(
                         brightness = state.brightnessOverride ?: 0.65f,
@@ -302,7 +305,6 @@ fun ReaderScreen(
             }
         }
 
-        // Top Reader Bar + Live Wrapping Search Bar
         AnimatedVisibility(
             visible = state.isChromeVisible || state.loadState !is ReaderLoadState.Ready,
             enter = slideInVertically { -it } + fadeIn(),
@@ -336,7 +338,6 @@ fun ReaderScreen(
             }
         }
 
-        // Bottom Reader Control Bar
         AnimatedVisibility(
             visible = state.isChromeVisible && state.loadState is ReaderLoadState.Ready,
             enter = slideInVertically { it } + fadeIn(),
@@ -484,10 +485,13 @@ private fun ReaderTopBar(
     onOpenTextMode: () -> Unit,
     onOpenTools: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        tonalElevation = 4.dp,
-        shadowElevation = 4.dp,
+        tonalElevation = sz.fabElevation,
+        shadowElevation = sz.fabElevation,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -495,7 +499,7 @@ private fun ReaderTopBar(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 4.dp, vertical = 6.dp)
+                .padding(horizontal = s.xs, vertical = s.xs)
         ) {
             IconButton(
                 onClick = onBack,
@@ -518,10 +522,10 @@ private fun ReaderTopBar(
                     overflow = TextOverflow.Ellipsis
                 )
                 if (state.pageCount > 0) {
-                    val marginBadge = if (state.hideMargins) " • Crop" else ""
-                    val incogBadge = if (state.incognitoMode) " • Incognito" else ""
+                    val marginBadge = if (state.hideMargins) " · Crop" else ""
+                    val incogBadge = if (state.incognitoMode) " · Incognito" else ""
                     Text(
-                        text = "${state.layoutMode.shortLabel} • ${String.format("%.1fx", state.zoomScale)}$marginBadge$incogBadge",
+                        text = "${state.layoutMode.shortLabel} · ${String.format(Locale.US, "%.1fx", state.zoomScale)}$marginBadge$incogBadge",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -622,16 +626,19 @@ private fun InPdfSearchOverlayBar(
     onNextMatch: () -> Unit,
     onClose: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+
     Surface(
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 6.dp,
-        shadowElevation = 6.dp,
+        tonalElevation = sz.heroElevation,
+        shadowElevation = sz.heroElevation,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = s.md, vertical = s.sm)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -642,12 +649,12 @@ private fun InPdfSearchOverlayBar(
                     onValueChange = onQueryChange,
                     placeholder = { Text(stringResource(R.string.reader_search_hint)) },
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = MaterialTheme.shapes.medium,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("in_pdf_search_input")
                 )
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(s.sm))
                 Text(
                     text = if (matchCount > 0) "${activeMatchIndex + 1}/$matchCount" else "0/0",
                     style = MaterialTheme.typography.labelSmall,
@@ -656,33 +663,39 @@ private fun InPdfSearchOverlayBar(
                 IconButton(
                     onClick = onPrevMatch,
                     enabled = matchCount > 0,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Previous match")
+                    Icon(
+                        Icons.Filled.KeyboardArrowUp,
+                        contentDescription = stringResource(R.string.reader_previous_match)
+                    )
                 }
                 IconButton(
                     onClick = onNextMatch,
                     enabled = matchCount > 0,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Next match")
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = stringResource(R.string.reader_next_match)
+                    )
                 }
                 IconButton(
                     onClick = onClose,
-                    modifier = Modifier.size(36.dp)
+                    modifier = Modifier.minimumInteractiveComponentSize()
                 ) {
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                 }
             }
             if (!activeSnippet.isNullOrBlank()) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(s.xs))
                 Text(
                     text = activeSnippet,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                    modifier = Modifier.padding(horizontal = s.xs)
                 )
             }
         }
@@ -700,6 +713,8 @@ private fun ReaderBottomBar(
     onOpenAnnotations: () -> Unit,
     onOpenTools: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     var sliderValue by remember(state.currentPage, state.pageCount) {
         mutableFloatStateOf(state.currentPage.toFloat())
     }
@@ -707,15 +722,15 @@ private fun ReaderBottomBar(
 
     Surface(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        tonalElevation = 4.dp,
-        shadowElevation = 6.dp,
+        tonalElevation = sz.fabElevation,
+        shadowElevation = sz.heroElevation,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = s.md, vertical = s.sm)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -725,18 +740,18 @@ private fun ReaderBottomBar(
                     onClick = onPagePillClick,
                     color = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = MaterialTheme.shapes.small,
                     modifier = Modifier.testTag("bottom_page_pill")
                 ) {
                     Text(
                         text = "${sliderValue.roundToInt() + 1} / ${state.pageCount.coerceAtLeast(1)}",
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
                     )
                 }
 
-                Spacer(modifier = Modifier.width(10.dp))
+                Spacer(modifier = Modifier.width(s.md))
 
                 Slider(
                     value = sliderValue.coerceIn(0f, maxIndex.toFloat()),
@@ -778,21 +793,21 @@ private fun ReaderBottomBar(
                 )
                 BottomActionItem(
                     icon = Icons.AutoMirrored.Filled.Toc,
-                    label = "TOC & Marks",
+                    label = stringResource(R.string.tab_bookmarks_label),
                     active = state.bookmarks.isNotEmpty(),
                     onClick = onOpenTocAndBookmarks,
                     tag = "reader_bookmarks_sheet_button"
                 )
                 BottomActionItem(
                     icon = Icons.Filled.Highlight,
-                    label = "Annotate",
+                    label = stringResource(R.string.tab_highlights_label),
                     active = state.annotations.isNotEmpty(),
                     onClick = onOpenAnnotations,
                     tag = "reader_annotations_button"
                 )
                 BottomActionItem(
                     icon = Icons.Filled.Tune,
-                    label = "All Tools",
+                    label = stringResource(R.string.reader_tools),
                     active = false,
                     onClick = onOpenTools,
                     tag = "reader_tools_button"
@@ -810,17 +825,19 @@ private fun BottomActionItem(
     onClick: () -> Unit,
     tag: String
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     val tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .minimumInteractiveComponentSize()
             .clickable(onClick = onClick)
-            .padding(horizontal = 6.dp, vertical = 4.dp)
+            .padding(horizontal = s.sm, vertical = s.xs)
             .testTag(tag)
     ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(21.dp))
-        Spacer(modifier = Modifier.height(2.dp))
+        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(sz.iconTool))
+        Spacer(modifier = Modifier.height(s.xxs))
         Text(text = label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
     }
 }
@@ -841,7 +858,7 @@ private fun FloatingEdgeShortcuts(
     modifier: Modifier = Modifier
 ) {
     Column(
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(TeenaTheme.spacing.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
     ) {
@@ -898,26 +915,28 @@ private fun EdgeShortcutChip(
     onClick: () -> Unit,
     tag: String
 ) {
+    val sz = TeenaTheme.sizes
     Surface(
         onClick = onClick,
         shape = CircleShape,
         color = if (active) {
             MaterialTheme.colorScheme.primary
         } else {
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.76f)
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
         },
         contentColor = if (active) {
             MaterialTheme.colorScheme.onPrimary
         } else {
             MaterialTheme.colorScheme.onSurface
         },
-        shadowElevation = 2.dp,
+        shadowElevation = sz.cardElevation,
         modifier = Modifier
-            .size(42.dp)
+            .minimumInteractiveComponentSize()
+            .size(sz.shortcutPillSize)
             .testTag(tag)
     ) {
         Box(contentAlignment = Alignment.Center) {
-            Icon(imageVector = icon, contentDescription = description, modifier = Modifier.size(20.dp))
+            Icon(imageVector = icon, contentDescription = description, modifier = Modifier.size(sz.iconTool))
         }
     }
 }
@@ -929,30 +948,41 @@ private fun AutoScrollControlPill(
     onIncrease: () -> Unit,
     onStop: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     Surface(
-        shape = RoundedCornerShape(28.dp),
+        shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.92f),
         contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        shadowElevation = 6.dp
+        shadowElevation = sz.heroElevation
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+            modifier = Modifier.padding(horizontal = s.sm, vertical = s.xs)
         ) {
-            IconButton(onClick = onDecrease, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Remove, contentDescription = "Slower auto-scroll")
+            IconButton(
+                onClick = onDecrease,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
+                Icon(Icons.Filled.Remove, contentDescription = stringResource(R.string.reader_scroll_slower))
             }
             Text(
-                text = "Auto ${speed}x",
+                text = stringResource(R.string.reader_speed_label, speed),
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 6.dp)
+                modifier = Modifier.padding(horizontal = s.sm)
             )
-            IconButton(onClick = onIncrease, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = "Faster auto-scroll")
+            IconButton(
+                onClick = onIncrease,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.reader_scroll_faster))
             }
-            IconButton(onClick = onStop, modifier = Modifier.size(38.dp)) {
-                Icon(Icons.Filled.Close, contentDescription = "Stop auto-scroll")
+            IconButton(
+                onClick = onStop,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
             }
         }
     }
@@ -965,27 +995,34 @@ private fun BrightnessControlOverlay(
     onResetAuto: () -> Unit,
     onClose: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     Surface(
-        shape = RoundedCornerShape(18.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        tonalElevation = 6.dp,
-        shadowElevation = 8.dp,
+        tonalElevation = sz.heroElevation,
+        shadowElevation = sz.menuElevation,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(modifier = Modifier.padding(18.dp)) {
+        Column(modifier = Modifier.padding(s.lg)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Filled.Brightness6, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(s.sm))
                 Text(
                     text = stringResource(R.string.reader_brightness),
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.weight(1f)
                 )
-                TextButton(onClick = onResetAuto) { Text("Auto") }
-                IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
+                TextButton(onClick = onResetAuto) {
+                    Text(stringResource(R.string.reader_system_brightness))
+                }
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                 }
             }
@@ -1004,33 +1041,35 @@ private fun ReaderErrorState(
     onRetry: () -> Unit,
     onBack: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier
             .fillMaxSize()
-            .padding(32.dp)
+            .padding(s.xxl)
     ) {
         Icon(
             imageVector = Icons.Filled.ErrorOutline,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(sz.iconButton)
         )
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(s.lg))
         Text(
             text = stringResource(R.string.reader_error_title),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(s.sm))
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(modifier = Modifier.height(20.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Spacer(modifier = Modifier.height(s.xl))
+        Row(horizontalArrangement = Arrangement.spacedBy(s.md)) {
             TextButton(onClick = onBack) { Text(stringResource(R.string.action_back)) }
             Button(onClick = onRetry) { Text(stringResource(R.string.reader_error_retry)) }
         }

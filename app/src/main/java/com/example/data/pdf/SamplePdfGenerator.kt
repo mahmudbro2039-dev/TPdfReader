@@ -105,7 +105,7 @@ object SamplePdfGenerator {
             chapter = "PART I  •  EDITORIAL TYPOGRAPHY",
             title = "Designing High-Contrast Reading Interfaces",
             bodyParagraphs = listOf(
-                "Great reading software disappears behind the content. By pairing geometric sans-serif UI labels (Plus Jakarta Sans) with high-legibility editorial serif prose (Newsreader) and tabular monospace counters (JetBrains Mono), visual fatigue is dramatically reduced.",
+                "Great reading software disappears behind the content. By pairing geometric sans-serif UI labels (Plus Jakarta Sans) with high-legibility editorial serif prose (Newsreader), visual fatigue is dramatically reduced.",
                 "Warm archival paper backgrounds (#F8F7F4) eliminate harsh digital glare in daylight, while obsidian charcoal (#0F0F12) and AMOLED black preserve night vision."
             ),
             tipBox = "Reference: https://material.io/design/typography for modern type scale guidelines."
@@ -187,7 +187,7 @@ object SamplePdfGenerator {
         val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#71717A")
             textSize = 10.5f
-            typeface = Typeface.create(Typeface.MONOSPACE, Typeface.NORMAL)
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
         }
         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.parseColor("#E4E2DD")

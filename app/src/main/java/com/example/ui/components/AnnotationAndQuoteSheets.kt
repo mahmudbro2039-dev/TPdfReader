@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -24,7 +23,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
@@ -52,6 +50,7 @@ import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -65,7 +64,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -75,7 +73,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.AnnotationEntity
 import com.example.data.model.AnnotationType
@@ -83,6 +80,7 @@ import com.example.data.model.HighlightColorOption
 import com.example.data.model.QuoteCardTheme
 import com.example.data.pdf.DocumentLinkEntry
 import com.example.data.pdf.QuoteCardRenderer
+import com.example.ui.theme.TeenaTheme
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -97,6 +95,10 @@ fun AnnotationsBottomSheet(
     onShareQuoteText: (String, Int) -> Unit,
     onDeleteAnnotation: (Long) -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val readerColors = TeenaTheme.colors.reader
+
     var selectedTab by remember { mutableIntStateOf(0) }
     var quoteInput by remember(currentPageTextSnippet) {
         mutableStateOf(
@@ -119,66 +121,69 @@ fun AnnotationsBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
                 text = stringResource(R.string.reader_annotations),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // Quick Add Highlight / Note Creator for Current Page
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(14.dp),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
+                Column(modifier = Modifier.padding(s.md)) {
                     Text(
-                        text = "ADD HIGHLIGHT OR NOTE ON PAGE ${currentPage + 1}",
+                        text = stringResource(R.string.reader_current_page_label, currentPage + 1).uppercase(),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(s.sm))
 
                     OutlinedTextField(
                         value = quoteInput,
                         onValueChange = { quoteInput = it },
-                        label = { Text("Highlighted passage") },
+                        label = { Text(stringResource(R.string.reader_note_quote_hint)) },
                         maxLines = 2,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(s.sm))
                     OutlinedTextField(
                         value = noteInput,
                         onValueChange = { noteInput = it },
-                        label = { Text("Attach personal note (optional)") },
+                        label = { Text(stringResource(R.string.reader_note_comment_hint)) },
                         singleLine = true,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(s.md))
 
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                             HighlightColorOption.entries.forEach { option ->
-                                val swatchColor = parseHexColor(option.hexColor)
+                                val swatchColor = parseHexColor(option.hexColor, readerColors.highlightDefault)
                                 val isSelected = selectedSwatch == option
                                 Box(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
-                                        .size(30.dp)
+                                        .size(sz.swatchSize)
                                         .clip(CircleShape)
                                         .background(swatchColor)
                                         .border(
-                                            width = if (isSelected) 2.5.dp else 1.dp,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Black.copy(alpha = 0.2f),
+                                            width = if (isSelected) sz.strokeWidth else sz.hairline,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onSurface
+                                            } else {
+                                                MaterialTheme.colorScheme.outline
+                                            },
                                             shape = CircleShape
                                         )
                                         .clickable { selectedSwatch = option }
@@ -187,8 +192,8 @@ fun AnnotationsBottomSheet(
                                         Icon(
                                             imageVector = Icons.Filled.Check,
                                             contentDescription = option.label,
-                                            tint = Color.Black,
-                                            modifier = Modifier.size(16.dp)
+                                            tint = readerColors.textLightFg,
+                                            modifier = Modifier.size(sz.iconSm)
                                         )
                                     }
                                 }
@@ -209,49 +214,49 @@ fun AnnotationsBottomSheet(
                             },
                             modifier = Modifier.testTag("save_annotation_button")
                         ) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("Save")
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(sz.iconSm))
+                            Spacer(modifier = Modifier.width(s.xs))
+                            Text(stringResource(R.string.action_save))
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
             PrimaryTabRow(selectedTabIndex = selectedTab) {
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("My Highlights") }
+                    text = { Text(stringResource(R.string.tab_highlights_label)) }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("My Notes") }
+                    text = { Text(stringResource(R.string.notes_highlights)) }
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Signatures") }
+                    text = { Text(stringResource(R.string.reader_signature_signed)) }
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(s.sm))
 
             if (filteredList.isEmpty()) {
                 Text(
-                    text = "No items in this section yet.",
+                    text = stringResource(R.string.empty_annotations_subtitle),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 24.dp)
+                    modifier = Modifier.padding(vertical = s.xl)
                 )
             } else {
                 LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(s.sm),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 280.dp)
+                        .heightIn(max = sz.sheetListMaxHeight)
                 ) {
                     items(filteredList, key = { it.id }) { item ->
                         AnnotationItemCard(
@@ -271,7 +276,7 @@ fun AnnotationsBottomSheet(
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 }
@@ -283,52 +288,49 @@ fun AnnotationItemCard(
     onShareQuote: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val swatchColor = parseHexColor(annotation.colorHex)
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val swatchColor = parseHexColor(annotation.colorHex, TeenaTheme.colors.reader.highlightDefault)
 
     Card(
         onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier
             .fillMaxWidth()
-            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+            .border(sz.hairline, TeenaTheme.colors.hairline, MaterialTheme.shapes.medium)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(s.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .width(5.dp)
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(4.dp))
+                    .width(sz.progressHeight)
+                    .height(sz.searchHeight)
+                    .clip(MaterialTheme.shapes.extraSmall)
                     .background(swatchColor)
             )
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(s.md))
             Column(modifier = Modifier.weight(1f)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "${annotation.annotationType.label.uppercase()}  •  PAGE ${annotation.pageIndex + 1}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                }
+                Text(
+                    text = "${annotation.annotationType.label.uppercase()}  ·  ${stringResource(R.string.page_badge_short, annotation.pageIndex + 1).uppercase()}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
                 if (annotation.annotationType == AnnotationType.SIGNATURE && annotation.signatureVectorData.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(s.xs))
                     VectorSignaturePreview(
                         signatureVectorData = annotation.signatureVectorData,
                         strokeColor = MaterialTheme.colorScheme.primary,
                         modifier = Modifier
-                            .width(140.dp)
-                            .height(42.dp)
+                            .width(sz.signatureStampWidth)
+                            .height(sz.signatureStampHeight)
                     )
                 } else if (annotation.quotedText.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(s.xxs))
                     Text(
                         text = "“${annotation.quotedText}”",
                         style = MaterialTheme.typography.bodySmall,
@@ -338,7 +340,7 @@ fun AnnotationItemCard(
                     )
                 }
                 if (annotation.noteText.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(s.xs))
                     Text(
                         text = annotation.noteText,
                         style = MaterialTheme.typography.bodyMedium,
@@ -349,19 +351,25 @@ fun AnnotationItemCard(
                 }
             }
             if (annotation.annotationType != AnnotationType.SIGNATURE) {
-                IconButton(onClick = onShareQuote, modifier = Modifier.size(36.dp)) {
+                IconButton(
+                    onClick = onShareQuote,
+                    modifier = Modifier.minimumInteractiveComponentSize()
+                ) {
                     Icon(
                         imageVector = Icons.Filled.FormatQuote,
                         contentDescription = stringResource(R.string.reader_share_quote),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(sz.searchIcon)
                     )
                 }
             }
-            IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
                 Icon(
                     imageVector = Icons.Filled.DeleteOutline,
                     contentDescription = stringResource(R.string.action_delete),
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier.size(sz.searchIcon)
                 )
             }
         }
@@ -376,26 +384,30 @@ fun SignaturePadBottomSheet(
     onDismiss: () -> Unit,
     onStampSignature: (vectorData: String, label: String) -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val readerColors = TeenaTheme.colors.reader
+
     val strokes = remember {
         mutableStateListOf<List<Offset>>().apply {
             addAll(deserializeVectorStrokes(savedSignatureVector))
         }
     }
     var currentStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
-    var signerLabel by remember { mutableStateOf("Authorized Signature") }
+    var signerLabel by remember { mutableStateOf("") }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Icon(Icons.Filled.Draw, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(s.sm))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = stringResource(R.string.reader_sign_pdf),
@@ -403,26 +415,29 @@ fun SignaturePadBottomSheet(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Draw sharp vector strokes to stamp onto Page ${currentPage + 1}",
+                        text = stringResource(R.string.reader_signature_hint),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(s.lg))
 
-            // Interactive Vector Drawing Pad
             val allStrokes = if (currentStroke.isNotEmpty()) strokes + listOf(currentStroke) else strokes.toList()
             val serialized = serializeVectorStrokes(allStrokes)
 
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xFFFCFBF8),
+                shape = MaterialTheme.shapes.large,
+                color = readerColors.textLightBg,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(175.dp)
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                    .height(sz.signaturePadHeight)
+                    .border(
+                        width = sz.borderThick,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                        shape = MaterialTheme.shapes.large
+                    )
                     .pointerInput(Unit) {
                         detectDragGestures(
                             onDragStart = { startOffset ->
@@ -456,38 +471,38 @@ fun SignaturePadBottomSheet(
                 Box(modifier = Modifier.fillMaxSize()) {
                     if (allStrokes.isEmpty()) {
                         Text(
-                            text = "Sign here with your finger or stylus",
+                            text = stringResource(R.string.reader_signature_hint),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF71717A),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.align(Alignment.Center)
                         )
                     }
                     VectorSignaturePreview(
                         signatureVectorData = serialized,
-                        strokeColor = Color(0xFF991B1B),
-                        strokeWidthDp = 3.2f,
+                        strokeColor = MaterialTheme.colorScheme.primary,
+                        strokeWidth = sz.strokeWidthBold,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(10.dp)
+                            .padding(s.md)
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
             OutlinedTextField(
                 value = signerLabel,
                 onValueChange = { signerLabel = it },
-                label = { Text("Signature label / stamp note") },
+                label = { Text(stringResource(R.string.reader_signature_label_hint)) },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(s.lg))
 
             Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(s.md),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedButton(
@@ -497,15 +512,15 @@ fun SignaturePadBottomSheet(
                     },
                     modifier = Modifier.weight(1f)
                 ) {
-                    Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Clear Pad")
+                    Icon(Icons.Filled.CleaningServices, contentDescription = null, modifier = Modifier.size(sz.iconSm))
+                    Spacer(modifier = Modifier.width(s.sm))
+                    Text(stringResource(R.string.reader_signature_clear))
                 }
 
                 Button(
                     onClick = {
                         if (serialized.isNotBlank()) {
-                            onStampSignature(serialized, signerLabel)
+                            onStampSignature(serialized, signerLabel.ifBlank { "Signed" })
                             onDismiss()
                         }
                     },
@@ -514,13 +529,13 @@ fun SignaturePadBottomSheet(
                         .weight(1f)
                         .testTag("stamp_signature_button")
                 ) {
-                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Stamp Page ${currentPage + 1}")
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(sz.iconSm))
+                    Spacer(modifier = Modifier.width(s.sm))
+                    Text(stringResource(R.string.reader_signature_stamp, currentPage + 1))
                 }
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 }
@@ -533,8 +548,11 @@ fun ShareQuoteBottomSheet(
     pageNumber: Int,
     onDismiss: () -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
     var quoteText by remember(initialQuoteText) {
         mutableStateOf(
             initialQuoteText.trim().ifBlank {
@@ -558,16 +576,16 @@ fun ShareQuoteBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
                 text = stringResource(R.string.reader_share_quote),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                 items(QuoteCardTheme.entries) { theme ->
                     FilterChip(
                         selected = selectedTheme == theme,
@@ -577,21 +595,20 @@ fun ShareQuoteBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
-            // Live Rendered Quote Card Preview
             Surface(
-                shape = RoundedCornerShape(16.dp),
-                tonalElevation = 3.dp,
+                shape = MaterialTheme.shapes.large,
+                tonalElevation = sz.cardElevation,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(230.dp)
+                    .height(sz.quotePreviewHeight)
             ) {
                 val bmp = renderedBitmap
                 if (bmp != null) {
                     Image(
                         bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Quote card preview",
+                        contentDescription = stringResource(R.string.reader_share_quote),
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
                     )
@@ -602,26 +619,27 @@ fun ShareQuoteBottomSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(s.md))
 
             OutlinedTextField(
                 value = quoteText,
                 onValueChange = { quoteText = it },
-                label = { Text("Edit quote text") },
+                label = { Text(stringResource(R.string.reader_quote_hint)) },
                 maxLines = 3,
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(s.lg))
 
+            val chooserTitle = stringResource(R.string.reader_share_quote)
             Button(
                 onClick = {
                     val bmp = renderedBitmap ?: return@Button
                     scope.launch {
                         val shareIntent = QuoteCardRenderer.shareQuoteBitmap(context, bmp, bookTitle)
                         if (shareIntent != null) {
-                            context.startActivity(Intent.createChooser(shareIntent, "Share Quote Card"))
+                            context.startActivity(Intent.createChooser(shareIntent, chooserTitle))
                         }
                         onDismiss()
                     }
@@ -630,12 +648,12 @@ fun ShareQuoteBottomSheet(
                     .fillMaxWidth()
                     .testTag("export_quote_card_button")
             ) {
-                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Share High-Res Quote Card Image")
+                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(sz.searchIcon))
+                Spacer(modifier = Modifier.width(s.sm))
+                Text(stringResource(R.string.reader_quote_share_image))
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 }
@@ -648,37 +666,35 @@ fun DocumentLinksBottomSheet(
     onJumpToPage: (Int) -> Unit,
     onOpenExternalUrl: (String) -> Unit
 ) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp)
+                .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
                 text = stringResource(R.string.reader_links),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = "Embedded URLs and cross-reference links detected across pages",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider()
+            Spacer(modifier = Modifier.height(s.md))
+            HorizontalDivider(color = TeenaTheme.colors.hairline)
 
             if (links.isEmpty()) {
                 Text(
-                    text = "No hyperlinks or cross-references were detected in this PDF.",
+                    text = stringResource(R.string.reader_no_links),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 28.dp)
+                    modifier = Modifier.padding(vertical = s.xl)
                 )
             } else {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 340.dp)
+                        .heightIn(max = sz.sheetListMaxHeight)
                 ) {
                     items(links) { entry ->
                         Row(
@@ -693,23 +709,23 @@ fun DocumentLinksBottomSheet(
                                     }
                                     onDismiss()
                                 }
-                                .padding(vertical = 12.dp)
+                                .padding(vertical = s.md)
                         ) {
                             Surface(
                                 color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.size(40.dp)
+                                shape = MaterialTheme.shapes.small,
+                                modifier = Modifier.size(sz.linkIconBox)
                             ) {
                                 Box(contentAlignment = Alignment.Center) {
                                     Icon(
                                         imageVector = if (entry.isInternalPageLink) Icons.Filled.Link else Icons.AutoMirrored.Filled.OpenInNew,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                                        modifier = Modifier.size(20.dp)
+                                        modifier = Modifier.size(sz.iconTool)
                                     )
                                 }
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(s.md))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = entry.title,
@@ -718,7 +734,7 @@ fun DocumentLinksBottomSheet(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${entry.urlOrTarget}  •  Found on Page ${entry.pageIndex + 1}",
+                                    text = "${entry.urlOrTarget}  ·  ${stringResource(R.string.page_badge_short, entry.pageIndex + 1)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -726,11 +742,11 @@ fun DocumentLinksBottomSheet(
                                 )
                             }
                         }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        HorizontalDivider(color = TeenaTheme.colors.hairline)
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.height(s.xl))
         }
     }
 }

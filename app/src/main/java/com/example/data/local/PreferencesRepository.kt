@@ -36,13 +36,15 @@ data class UserPreferences(
     val showEdgeShortcutButtons: Boolean = true,
     val pageGapSpacing: Boolean = true,
     val renderQuality: RenderQuality = RenderQuality.HIGH,
-    val isLibraryGridView: Boolean = false,
+    val isLibraryGridView: Boolean = true,
     val textModeTheme: TextModeTheme = TextModeTheme.LIGHT,
     val textModeFontSizeSp: Float = 17f,
     val textModeLineHeightMultiplier: Float = 1.6f,
     val textModeFontChoice: TextFontChoice = TextFontChoice.SERIF,
     val autoScrollSpeed: Int = 3,
-    val savedSignatureVector: String = ""
+    val savedSignatureVector: String = "",
+    val deepSearch: Boolean = false,
+    val sortOrderName: String = "LastOpened"
 )
 
 class PreferencesRepository(private val context: Context) {
@@ -69,6 +71,8 @@ class PreferencesRepository(private val context: Context) {
         val TEXT_MODE_FONT_CHOICE = stringPreferencesKey("text_mode_font_choice")
         val AUTO_SCROLL_SPEED = intPreferencesKey("auto_scroll_speed")
         val SAVED_SIGNATURE_VECTOR = stringPreferencesKey("saved_signature_vector")
+        val DEEP_SEARCH = booleanPreferencesKey("deep_search")
+        val SORT_ORDER = stringPreferencesKey("sort_order")
     }
 
     val preferencesFlow: Flow<UserPreferences> = context.mjPdfDataStore.data.map { prefs ->
@@ -87,14 +91,24 @@ class PreferencesRepository(private val context: Context) {
             showEdgeShortcutButtons = prefs[Keys.SHOW_EDGE_SHORTCUTS] ?: true,
             pageGapSpacing = prefs[Keys.PAGE_GAP_SPACING] ?: true,
             renderQuality = RenderQuality.fromName(prefs[Keys.RENDER_QUALITY] ?: RenderQuality.HIGH.name),
-            isLibraryGridView = prefs[Keys.LIBRARY_GRID_VIEW] ?: false,
+            isLibraryGridView = prefs[Keys.LIBRARY_GRID_VIEW] ?: true,
             textModeTheme = TextModeTheme.fromName(prefs[Keys.TEXT_MODE_THEME] ?: TextModeTheme.LIGHT.name),
             textModeFontSizeSp = prefs[Keys.TEXT_MODE_FONT_SIZE] ?: 17f,
             textModeLineHeightMultiplier = prefs[Keys.TEXT_MODE_LINE_HEIGHT] ?: 1.6f,
             textModeFontChoice = TextFontChoice.fromName(prefs[Keys.TEXT_MODE_FONT_CHOICE] ?: TextFontChoice.SERIF.name),
             autoScrollSpeed = prefs[Keys.AUTO_SCROLL_SPEED] ?: 3,
-            savedSignatureVector = prefs[Keys.SAVED_SIGNATURE_VECTOR] ?: ""
+            savedSignatureVector = prefs[Keys.SAVED_SIGNATURE_VECTOR] ?: "",
+            deepSearch = prefs[Keys.DEEP_SEARCH] ?: false,
+            sortOrderName = prefs[Keys.SORT_ORDER] ?: "LastOpened"
         )
+    }
+
+    suspend fun setDeepSearch(enabled: Boolean) {
+        context.mjPdfDataStore.edit { it[Keys.DEEP_SEARCH] = enabled }
+    }
+
+    suspend fun setSortOrderName(name: String) {
+        context.mjPdfDataStore.edit { it[Keys.SORT_ORDER] = name }
     }
 
     suspend fun setAppThemeMode(mode: AppThemeMode) {

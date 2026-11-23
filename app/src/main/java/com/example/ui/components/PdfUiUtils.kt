@@ -1,11 +1,6 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -16,21 +11,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.example.data.model.PdfColorMode
-import com.example.data.model.ReadingStatus
-import com.example.ui.theme.ReaderCanvasDark
-import com.example.ui.theme.ReaderCanvasLight
-import com.example.ui.theme.ReaderCanvasSepia
-import com.example.ui.theme.StatusAbandonedColor
-import com.example.ui.theme.StatusCompletedColor
-import com.example.ui.theme.StatusOnHoldColor
-import com.example.ui.theme.StatusReadingColor
-import com.example.ui.theme.StatusToReadColor
-import java.text.SimpleDateFormat
-import java.util.Date
+import com.example.ui.theme.TeenaTheme
 import java.util.Locale
-import kotlin.math.abs
 
 fun pdfColorFilterFor(mode: PdfColorMode): ColorFilter? = when (mode) {
     PdfColorMode.NORMAL -> null
@@ -71,43 +55,19 @@ fun pdfColorFilterFor(mode: PdfColorMode): ColorFilter? = when (mode) {
     }
 }
 
-fun readerCanvasColorFor(mode: PdfColorMode, isDarkTheme: Boolean): Color = when (mode) {
-    PdfColorMode.DARK_INVERT -> ReaderCanvasDark
-    PdfColorMode.SEPIA -> ReaderCanvasSepia
-    PdfColorMode.NORMAL, PdfColorMode.HIGH_CONTRAST ->
-        if (isDarkTheme) ReaderCanvasDark else ReaderCanvasLight
-}
-
-fun statusAccentColor(status: ReadingStatus): Color = when (status) {
-    ReadingStatus.READING -> StatusReadingColor
-    ReadingStatus.TO_READ -> StatusToReadColor
-    ReadingStatus.ON_HOLD -> StatusOnHoldColor
-    ReadingStatus.COMPLETED -> StatusCompletedColor
-    ReadingStatus.ABANDONED -> StatusAbandonedColor
-}
-
-fun parseHexColor(hex: String, fallback: Color = Color(0xFFFACC15)): Color =
-    runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
-
 @Composable
-fun ReadingStatusBadge(
-    status: ReadingStatus,
-    modifier: Modifier = Modifier
-) {
-    val accent = statusAccentColor(status)
-    Surface(
-        modifier = modifier,
-        color = accent.copy(alpha = 0.14f),
-        shape = RoundedCornerShape(6.dp)
-    ) {
-        Text(
-            text = status.label,
-            style = MaterialTheme.typography.labelSmall,
-            color = accent,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-        )
+fun readerCanvasColorFor(mode: PdfColorMode, isDarkTheme: Boolean): Color {
+    val reader = TeenaTheme.colors.reader
+    return when (mode) {
+        PdfColorMode.DARK_INVERT -> reader.canvasDark
+        PdfColorMode.SEPIA -> reader.canvasSepia
+        PdfColorMode.NORMAL, PdfColorMode.HIGH_CONTRAST ->
+            if (isDarkTheme) reader.canvasDark else reader.canvasLight
     }
 }
+
+fun parseHexColor(hex: String, fallback: Color): Color =
+    runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
 
 fun serializeVectorStrokes(strokes: List<List<Offset>>): String {
     return strokes.filter { it.isNotEmpty() }.joinToString("|") { stroke ->
@@ -138,12 +98,12 @@ fun deserializeVectorStrokes(serialized: String): List<List<Offset>> {
 fun VectorSignaturePreview(
     signatureVectorData: String,
     strokeColor: Color,
-    strokeWidthDp: Float = 2.6f,
+    strokeWidth: Dp = TeenaTheme.sizes.strokeWidth,
     modifier: Modifier = Modifier
 ) {
     val strokes = deserializeVectorStrokes(signatureVectorData)
     Canvas(modifier = modifier) {
-        val strokePx = strokeWidthDp.dp.toPx()
+        val strokePx = strokeWidth.toPx()
         strokes.forEach { stroke ->
             if (stroke.size == 1) {
                 val pt = stroke.first()
@@ -176,27 +136,12 @@ fun VectorSignaturePreview(
 }
 
 fun formatFileSize(bytes: Long): String {
-    if (bytes <= 0L) return "Local PDF"
+    if (bytes <= 0L) return "0 KB"
     val kb = bytes / 1024.0
     val mb = kb / 1024.0
     return when {
         mb >= 1.0 -> String.format(Locale.getDefault(), "%.1f MB", mb)
         kb >= 1.0 -> String.format(Locale.getDefault(), "%.0f KB", kb)
         else -> "$bytes B"
-    }
-}
-
-fun formatRelativeTime(timestampMs: Long): String {
-    if (timestampMs <= 0L) return ""
-    val diff = abs(System.currentTimeMillis() - timestampMs)
-    val minutes = diff / 60_000L
-    val hours = minutes / 60L
-    val days = hours / 24L
-    return when {
-        minutes < 1L -> "Just now"
-        minutes < 60L -> "${minutes}m ago"
-        hours < 24L -> "${hours}h ago"
-        days < 7L -> "${days}d ago"
-        else -> SimpleDateFormat("MMM d", Locale.getDefault()).format(Date(timestampMs))
     }
 }

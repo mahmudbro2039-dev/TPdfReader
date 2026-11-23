@@ -22,6 +22,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "MJ PDF"
+rootProject.name = "TeenaReader"
 
 include(":app")
