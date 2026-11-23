@@ -123,8 +123,8 @@ enum class LibrarySortOrder(val label: String) {
 }
 
 enum class RenderQuality(val label: String, val scaleFactor: Float) {
-    STANDARD("Standard (Fast)", 1.35f),
-    HIGH("High DPI (Crisp)", 2.0f);
+    STANDARD("Standard (Fast)", 0.95f),
+    HIGH("High DPI (Crisp)", 1.25f);
 
     companion object {
         fun fromName(name: String): RenderQuality =

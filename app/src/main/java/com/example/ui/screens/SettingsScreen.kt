@@ -19,8 +19,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.BatteryChargingFull
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.DeleteSweep
+import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,14 +52,19 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.PageFitPolicy
 import com.example.data.model.PdfColorMode
 import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
+import com.example.data.system.DevicePermissionsHelper
 import com.example.ui.model.toAppThemeMode
 import com.example.ui.model.toThemeMode
 import com.example.ui.theme.TeenaTheme
@@ -67,9 +76,26 @@ import kotlinx.coroutines.launch
 @Composable
 fun SettingsScreen(
     viewModel: SettingsViewModel,
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    onRequestAllFilesAccess: () -> Unit = {},
+    onRequestBatteryExemption: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
+    val scanProgress by viewModel.scanProgress.collectAsStateWithLifecycle()
+    var accessStatus by remember { mutableStateOf(DevicePermissionsHelper.getStatus(context)) }
+
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, context) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessStatus = DevicePermissionsHelper.getStatus(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showClearHistoryDialog by remember { mutableStateOf(false) }
@@ -125,6 +151,57 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            item(key = "section_permissions", contentType = "settings_section") {
+                SettingsCardSection(title = stringResource(R.string.settings_section_permissions)) {
+                    ActionSettingRow(
+                        icon = if (accessStatus.hasAllFilesAccess) Icons.Rounded.CheckCircle else Icons.Rounded.FolderOpen,
+                        title = stringResource(R.string.perm_all_files_title),
+                        subtitle = stringResource(
+                            if (accessStatus.hasAllFilesAccess) R.string.perm_all_files_granted
+                            else R.string.perm_all_files_missing
+                        ),
+                        onClick = onRequestAllFilesAccess
+                    )
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
+                    ActionSettingRow(
+                        icon = if (accessStatus.isBatteryOptimizationIgnored) Icons.Rounded.CheckCircle else Icons.Rounded.BatteryChargingFull,
+                        title = stringResource(R.string.perm_battery_title),
+                        subtitle = stringResource(
+                            if (accessStatus.isBatteryOptimizationIgnored) R.string.perm_battery_granted
+                            else R.string.perm_battery_missing
+                        ),
+                        onClick = onRequestBatteryExemption
+                    )
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
+                    val scanSubtitle = if (scanProgress.isScanning) {
+                        stringResource(R.string.scanner_found_count, scanProgress.totalFoundCount)
+                    } else {
+                        stringResource(R.string.scanner_rescan_desc)
+                    }
+                    ActionSettingRow(
+                        icon = Icons.Rounded.Refresh,
+                        title = stringResource(
+                            if (scanProgress.isScanning) R.string.scanner_scanning_title
+                            else R.string.scanner_rescan_title
+                        ),
+                        subtitle = scanSubtitle,
+                        onClick = {
+                            viewModel.rescanDevicePdfs { result ->
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(
+                                        context.getString(
+                                            R.string.scanner_rescan_done,
+                                            result.newlyAddedCount,
+                                            result.totalFoundCount
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
             item(key = "section_appearance", contentType = "settings_section") {
                 SettingsCardSection(title = stringResource(R.string.settings_section_appearance)) {
                     ChipOptionGroup(

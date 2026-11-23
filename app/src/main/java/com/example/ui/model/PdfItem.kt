@@ -52,7 +52,8 @@ data class FolderItem(
     val name: String,
     val pdfCount: Int,
     val totalSizeBytes: Long,
-    val lastUpdatedAt: Long
+    val lastUpdatedAt: Long,
+    val previewUris: List<String> = emptyList()
 )
 
 @Immutable

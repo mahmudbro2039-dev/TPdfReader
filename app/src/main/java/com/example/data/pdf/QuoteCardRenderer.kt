@@ -197,10 +197,12 @@ object QuoteCardRenderer {
         }.getOrNull()
     }
 
+    private val whitespaceRegex = Regex("\\s+")
+
     private fun wrapQuoteLines(text: String, maxWidth: Float, paint: Paint): List<String> {
         val result = mutableListOf<String>()
         text.lines().forEach { paragraph ->
-            val words = paragraph.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            val words = paragraph.trim().split(whitespaceRegex).filter { it.isNotEmpty() }
             if (words.isEmpty()) {
                 if (result.isNotEmpty() && result.last().isNotEmpty()) result.add("")
             } else {

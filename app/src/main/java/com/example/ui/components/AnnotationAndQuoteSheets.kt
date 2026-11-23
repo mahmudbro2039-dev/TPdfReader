@@ -16,13 +16,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
@@ -100,11 +104,20 @@ fun AnnotationsBottomSheet(
     val readerColors = TeenaTheme.colors.reader
 
     var selectedTab by remember { mutableIntStateOf(0) }
-    var quoteInput by remember(currentPageTextSnippet) {
+    var hasEditedQuote by remember(currentPage) { mutableStateOf(false) }
+    var quoteInput by remember(currentPage) {
         mutableStateOf(
             currentPageTextSnippet.lines().firstOrNull { it.length > 24 }?.take(180)
                 ?: "Highlighted passage on Page ${currentPage + 1}"
         )
+    }
+    LaunchedEffect(currentPageTextSnippet, currentPage) {
+        if (!hasEditedQuote) {
+            val extracted = currentPageTextSnippet.lines().firstOrNull { it.length > 24 }?.take(180)
+            if (!extracted.isNullOrBlank()) {
+                quoteInput = extracted
+            }
+        }
     }
     var noteInput by remember { mutableStateOf("") }
     var selectedSwatch by remember { mutableStateOf(HighlightColorOption.YELLOW) }
@@ -121,6 +134,9 @@ fun AnnotationsBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
@@ -145,7 +161,10 @@ fun AnnotationsBottomSheet(
 
                     OutlinedTextField(
                         value = quoteInput,
-                        onValueChange = { quoteInput = it },
+                        onValueChange = {
+                            hasEditedQuote = true
+                            quoteInput = it
+                        },
                         label = { Text(stringResource(R.string.reader_note_quote_hint)) },
                         maxLines = 2,
                         shape = MaterialTheme.shapes.small,
@@ -258,7 +277,11 @@ fun AnnotationsBottomSheet(
                         .fillMaxWidth()
                         .heightIn(max = sz.sheetListMaxHeight)
                 ) {
-                    items(filteredList, key = { it.id }) { item ->
+                    items(
+                        items = filteredList,
+                        key = { it.id },
+                        contentType = { "annotation_item" }
+                    ) { item ->
                         AnnotationItemCard(
                             annotation = item,
                             onClick = {
@@ -400,6 +423,9 @@ fun SignaturePadBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Row(
@@ -576,6 +602,9 @@ fun ShareQuoteBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
@@ -586,7 +615,11 @@ fun ShareQuoteBottomSheet(
             Spacer(modifier = Modifier.height(s.md))
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                items(QuoteCardTheme.entries) { theme ->
+                items(
+                    items = QuoteCardTheme.entries,
+                    key = { it.name },
+                    contentType = { "quote_theme" }
+                ) { theme ->
                     FilterChip(
                         selected = selectedTheme == theme,
                         onClick = { selectedTheme = theme },
@@ -673,6 +706,7 @@ fun DocumentLinksBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
@@ -696,7 +730,11 @@ fun DocumentLinksBottomSheet(
                         .fillMaxWidth()
                         .heightIn(max = sz.sheetListMaxHeight)
                 ) {
-                    items(links) { entry ->
+                    items(
+                        items = links,
+                        key = { "${it.pageIndex}_${it.urlOrTarget}_${it.isInternalPageLink}" },
+                        contentType = { "doc_link" }
+                    ) { entry ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier

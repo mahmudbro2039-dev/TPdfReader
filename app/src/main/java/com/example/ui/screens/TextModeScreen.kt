@@ -229,7 +229,7 @@ fun TextModeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     IconButton(
-                        onClick = { viewModel.stepPage(-1) },
+                        onClick = { viewModel.stepSinglePage(-1) },
                         enabled = state.currentPage > 0,
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
@@ -249,7 +249,7 @@ fun TextModeScreen(
                     )
 
                     IconButton(
-                        onClick = { viewModel.stepPage(1) },
+                        onClick = { viewModel.stepSinglePage(1) },
                         enabled = state.currentPage < state.pageCount - 1,
                         modifier = Modifier
                             .minimumInteractiveComponentSize()

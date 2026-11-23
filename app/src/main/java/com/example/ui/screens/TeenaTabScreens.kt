@@ -4,32 +4,41 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import com.example.R
 import com.example.ui.components.EmptyState
-import com.example.ui.components.FabController
 import com.example.ui.components.FilterChipsRow
 import com.example.ui.components.FolderBreadcrumb
-import com.example.ui.components.FolderRow
+import com.example.ui.components.FolderCard
 import com.example.ui.components.HeroContinueCard
 import com.example.ui.components.PdfGridCard
 import com.example.ui.components.PdfRowCard
 import com.example.ui.components.SectionHeader
 import com.example.ui.components.ShimmerLoadingGrid
 import com.example.ui.components.ShimmerLoadingList
+import com.example.ui.components.formatFileSize
 import com.example.ui.model.FolderItem
 import com.example.ui.model.PdfItem
 import com.example.ui.model.ViewMode
@@ -42,17 +51,11 @@ fun RecentTabScreen(
     heroItem: PdfItem?,
     remainingItems: List<PdfItem>,
     listState: LazyListState,
-    fabController: FabController,
     onOpenPdf: (PdfItem) -> Unit,
     onItemMore: (PdfItem) -> Unit,
     onPickPdf: () -> Unit
 ) {
     val s = TeenaTheme.spacing
-
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex == 0 }
-            .collect { fabController.expanded = it }
-    }
 
     when {
         isLoading -> ShimmerLoadingList()
@@ -72,7 +75,7 @@ fun RecentTabScreen(
                     top = s.sm,
                     bottom = s.listBottom
                 ),
-                verticalArrangement = Arrangement.spacedBy(s.md)
+                verticalArrangement = Arrangement.spacedBy(s.sm)
             ) {
                 item(key = "hero", contentType = "hero") {
                     HeroContinueCard(
@@ -97,6 +100,7 @@ fun RecentTabScreen(
                             item = item,
                             onClick = { onOpenPdf(item) },
                             onMore = onItemMore,
+                            compact = true,
                             modifier = Modifier.animateItem()
                         )
                     }
@@ -116,7 +120,6 @@ fun LibraryTabScreen(
     totalCount: Int,
     listState: LazyListState,
     gridState: LazyGridState,
-    fabController: FabController,
     onSelectStatus: (ReadingStatus?) -> Unit,
     onOpenPdf: (PdfItem) -> Unit,
     onItemMore: (PdfItem) -> Unit,
@@ -124,16 +127,6 @@ fun LibraryTabScreen(
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
-
-    LaunchedEffect(viewMode, listState, gridState) {
-        if (viewMode == ViewMode.List) {
-            snapshotFlow { listState.firstVisibleItemIndex == 0 }
-                .collect { fabController.expanded = it }
-        } else {
-            snapshotFlow { gridState.firstVisibleItemIndex == 0 }
-                .collect { fabController.expanded = it }
-        }
-    }
 
     if (isLoading) {
         if (viewMode == ViewMode.Grid) {
@@ -185,8 +178,7 @@ fun LibraryTabScreen(
                         PdfRowCard(
                             item = item,
                             onClick = { onOpenPdf(item) },
-                            onMore = onItemMore,
-                            modifier = Modifier.animateItem()
+                            onMore = onItemMore
                         )
                     }
                 }
@@ -213,8 +205,7 @@ fun LibraryTabScreen(
                         PdfGridCard(
                             item = item,
                             onClick = { onOpenPdf(item) },
-                            onMore = onItemMore,
-                            modifier = Modifier.animateItem()
+                            onMore = onItemMore
                         )
                     }
                 }
@@ -230,7 +221,7 @@ fun FoldersTabScreen(
     selectedFolderName: String?,
     folderPdfs: List<PdfItem>,
     listState: LazyListState,
-    fabController: FabController,
+    gridState: LazyGridState,
     onOpenFolder: (String) -> Unit,
     onCloseFolder: () -> Unit,
     onOpenPdf: (PdfItem) -> Unit,
@@ -238,24 +229,25 @@ fun FoldersTabScreen(
     onPickPdf: () -> Unit
 ) {
     val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
 
     BackHandler(enabled = selectedFolderName != null) {
         onCloseFolder()
     }
 
-    LaunchedEffect(listState, selectedFolderName) {
-        snapshotFlow { listState.firstVisibleItemIndex == 0 }
-            .collect { fabController.expanded = it }
-    }
-
     if (isLoading) {
-        ShimmerLoadingList()
+        ShimmerLoadingGrid()
         return
     }
+
+    val folderTotalSizeBytes = remember(folderPdfs) { folderPdfs.sumOf { it.sizeBytes } }
 
     Column(modifier = Modifier.fillMaxSize()) {
         FolderBreadcrumb(
             currentFolder = selectedFolderName,
+            pdfCount = folderPdfs.size,
+            totalSizeBytes = folderTotalSizeBytes,
             onRootClick = onCloseFolder
         )
 
@@ -268,8 +260,16 @@ fun FoldersTabScreen(
                     onOpenPdf = onPickPdf
                 )
             } else {
-                LazyColumn(
-                    state = listState,
+                val (totalPdfs, totalBytesAll) = remember(folders) {
+                    folders.sumOf { it.pdfCount } to folders.sumOf { it.totalSizeBytes }
+                }
+                val totalSize = formatFileSize(totalBytesAll)
+                val folderCountLabel = pluralStringResource(R.plurals.folder_count, folders.size, folders.size)
+                val pdfCountLabel = pluralStringResource(R.plurals.pdf_count, totalPdfs, totalPdfs)
+
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(sz.folderGridMinCell),
+                    state = gridState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = s.screenH,
@@ -277,17 +277,47 @@ fun FoldersTabScreen(
                         top = s.sm,
                         bottom = s.listBottom
                     ),
-                    verticalArrangement = Arrangement.spacedBy(s.md)
+                    horizontalArrangement = Arrangement.spacedBy(s.gridGapH),
+                    verticalArrangement = Arrangement.spacedBy(s.gridGapV)
                 ) {
+                    item(
+                        key = "folders_summary",
+                        span = { GridItemSpan(maxLineSpan) },
+                        contentType = "header"
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = s.xs),
+                            horizontalArrangement = Arrangement.spacedBy(s.sm),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = folderCountLabel.uppercase(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = cs.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = stringResource(R.string.folder_meta_format, pdfCountLabel, totalSize),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = cs.onSurfaceVariant,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                     items(
                         items = folders,
                         key = { it.name },
                         contentType = { "folder" }
                     ) { folder ->
-                        FolderRow(
+                        FolderCard(
                             folder = folder,
-                            onClick = { onOpenFolder(folder.name) },
-                            modifier = Modifier.animateItem()
+                            onClick = { onOpenFolder(folder.name) }
                         )
                     }
                 }
@@ -320,8 +350,7 @@ fun FoldersTabScreen(
                         PdfRowCard(
                             item = item,
                             onClick = { onOpenPdf(item) },
-                            onMore = onItemMore,
-                            modifier = Modifier.animateItem()
+                            onMore = onItemMore
                         )
                     }
                 }
@@ -349,33 +378,38 @@ fun SearchResultsScreen(
             onOpenPdf = onPickPdf
         )
         else -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = s.screenH,
-                    end = s.screenH,
-                    top = s.sm,
-                    bottom = s.listBottom
-                ),
-                verticalArrangement = Arrangement.spacedBy(s.md)
-            ) {
-                item(key = "search_header", contentType = "header") {
-                    SectionHeader(
-                        text = stringResource(R.string.search_results_header),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (isSearching) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
-                items(
-                    items = results,
-                    key = { it.id },
-                    contentType = { "pdf" }
-                ) { item ->
-                    PdfRowCard(
-                        item = item,
-                        onClick = { onOpenPdf(item) },
-                        onMore = onItemMore,
-                        modifier = Modifier.animateItem()
-                    )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = s.screenH,
+                        end = s.screenH,
+                        top = s.sm,
+                        bottom = s.listBottom
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(s.md)
+                ) {
+                    item(key = "search_header", contentType = "header") {
+                        SectionHeader(
+                            text = stringResource(R.string.search_results_header),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    items(
+                        items = results,
+                        key = { it.id },
+                        contentType = { "pdf" }
+                    ) { item ->
+                        PdfRowCard(
+                            item = item,
+                            onClick = { onOpenPdf(item) },
+                            onMore = onItemMore,
+                            modifier = Modifier.animateItem()
+                        )
+                    }
                 }
             }
         }

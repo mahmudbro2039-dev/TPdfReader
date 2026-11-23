@@ -76,6 +76,7 @@ data class ReaderSurfaceColors(
 /** Extra semantic colors, ALL derived from the ColorScheme (so changing Brand changes everything). */
 @Immutable
 class TeenaColors(
+    val isDark: Boolean,
     val hairline: Color,
     val progressTrack: Color,
     val progressFill: Color,
@@ -127,10 +128,11 @@ internal fun buildExtras(scheme: ColorScheme, dark: Boolean): TeenaColors {
         pagePaper = Color.White
     )
     return TeenaColors(
+        isDark = dark,
         hairline = scheme.outlineVariant,
         progressTrack = scheme.outlineVariant,
         progressFill = scheme.primary,
-        searchBg = scheme.surfaceVariant,
+        searchBg = scheme.surfaceVariant.copy(alpha = if (dark) 0.50f else 0.55f).compositeOver(scheme.surface),
         coverScrim = Color.Black.copy(alpha = 0.45f),
         onCoverScrim = Color.White,
         badgeBg = scheme.surface,

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,10 +21,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Subject
 import androidx.compose.material.icons.automirrored.filled.Toc
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Draw
@@ -31,6 +36,9 @@ import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Numbers
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.ScreenRotation
@@ -154,6 +162,8 @@ fun BookmarksAndTocBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
             Text(
@@ -198,7 +208,12 @@ fun BookmarksAndTocBottomSheet(
                                 .fillMaxWidth()
                                 .heightIn(max = sz.sheetListMaxHeight)
                         ) {
-                            items(tocEntries) { entry ->
+                            items(
+                                count = tocEntries.size,
+                                key = { idx -> "toc_${idx}_${tocEntries[idx].pageIndex}" },
+                                contentType = { "toc_entry" }
+                            ) { idx ->
+                                val entry = tocEntries[idx]
                                 val isCurrent = entry.pageIndex == currentPage
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -292,7 +307,11 @@ fun BookmarksAndTocBottomSheet(
                                 .fillMaxWidth()
                                 .heightIn(max = sz.sheetListMaxHeight)
                         ) {
-                            items(bookmarks, key = { it.id }) { bm ->
+                            items(
+                                items = bookmarks,
+                                key = { it.id },
+                                contentType = { "bookmark_item" }
+                            ) { bm ->
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -361,7 +380,11 @@ fun BookmarksAndTocBottomSheet(
                                 .fillMaxWidth()
                                 .heightIn(max = sz.sheetListMaxHeight)
                         ) {
-                            items(reversedHistory.size) { idx ->
+                            items(
+                                count = reversedHistory.size,
+                                key = { idx -> "history_${idx}_${reversedHistory[idx]}" },
+                                contentType = { "history_item" }
+                            ) { idx ->
                                 val pageIdx = reversedHistory[idx]
                                 val matchingChapter = tocEntries.lastOrNull { it.pageIndex <= pageIdx }
                                 Row(
@@ -460,6 +483,11 @@ fun QuickToolsBottomSheet(
     onToggleKeepScreenOn: (Boolean) -> Unit,
     onSelectStatus: (ReadingStatus) -> Unit,
     onOpenSearch: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onOpenGoToPage: () -> Unit,
+    onToggleAutoScroll: () -> Unit,
+    onJumpBack: () -> Unit,
+    onJumpForward: () -> Unit,
     onOpenTocAndBookmarks: () -> Unit,
     onOpenAnnotations: () -> Unit,
     onOpenSignaturePad: () -> Unit,
@@ -481,18 +509,47 @@ fun QuickToolsBottomSheet(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = s.screenH, vertical = s.sm)
         ) {
-            Text(
-                text = stringResource(R.string.reader_tools),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = "${state.documentTitle}  ·  ${stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1))}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.reader_tools),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${state.documentTitle}  ·  ${stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1))}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                if (state.canJumpBack) {
+                    IconButton(onClick = {
+                        onDismiss()
+                        onJumpBack()
+                    }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = stringResource(R.string.reader_history_back)
+                        )
+                    }
+                }
+                if (state.canJumpForward) {
+                    IconButton(onClick = {
+                        onDismiss()
+                        onJumpForward()
+                    }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Redo,
+                            contentDescription = stringResource(R.string.reader_history_forward)
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(s.lg))
 
@@ -501,9 +558,20 @@ fun QuickToolsBottomSheet(
                     onDismiss()
                     onOpenSearch()
                 },
+                ToolGridTile(
+                    if (state.isCurrentPageBookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                    stringResource(R.string.reader_add_bookmark),
+                    state.isCurrentPageBookmarked
+                ) {
+                    onToggleBookmark()
+                },
                 ToolGridTile(Icons.AutoMirrored.Filled.Toc, stringResource(R.string.reader_bookmarks), false) {
                     onDismiss()
                     onOpenTocAndBookmarks()
+                },
+                ToolGridTile(Icons.Filled.Numbers, stringResource(R.string.reader_go_to_page), false) {
+                    onDismiss()
+                    onOpenGoToPage()
                 },
                 ToolGridTile(Icons.AutoMirrored.Filled.Subject, stringResource(R.string.reader_text_mode), false) {
                     onDismiss()
@@ -523,6 +591,14 @@ fun QuickToolsBottomSheet(
                 },
                 ToolGridTile(Icons.Filled.CropFree, stringResource(R.string.reader_hide_margins), state.hideMargins) {
                     onToggleHideMargins()
+                },
+                ToolGridTile(
+                    if (state.isAutoScrollActive) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                    stringResource(R.string.reader_auto_scroll),
+                    state.isAutoScrollActive
+                ) {
+                    onDismiss()
+                    onToggleAutoScroll()
                 },
                 ToolGridTile(Icons.Filled.Link, "${stringResource(R.string.reader_links)} (${state.documentLinks.size})", state.documentLinks.isNotEmpty()) {
                     onDismiss()
@@ -571,7 +647,11 @@ fun QuickToolsBottomSheet(
             )
             Spacer(modifier = Modifier.height(s.sm))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                items(ScrollLayoutMode.entries) { mode ->
+                items(
+                    items = ScrollLayoutMode.entries,
+                    key = { it.name },
+                    contentType = { "layout_mode" }
+                ) { mode ->
                     FilterChip(
                         selected = state.layoutMode == mode,
                         onClick = { onSelectLayout(mode) },
@@ -588,7 +668,11 @@ fun QuickToolsBottomSheet(
             )
             Spacer(modifier = Modifier.height(s.sm))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                items(PageFitPolicy.entries) { policy ->
+                items(
+                    items = PageFitPolicy.entries,
+                    key = { it.name },
+                    contentType = { "fit_policy" }
+                ) { policy ->
                     FilterChip(
                         selected = state.pageFitPolicy == policy,
                         onClick = { onSelectFitPolicy(policy) },
@@ -605,7 +689,11 @@ fun QuickToolsBottomSheet(
             )
             Spacer(modifier = Modifier.height(s.sm))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                items(PdfColorMode.entries) { colorMode ->
+                items(
+                    items = PdfColorMode.entries,
+                    key = { it.name },
+                    contentType = { "color_mode" }
+                ) { colorMode ->
                     FilterChip(
                         selected = state.colorMode == colorMode,
                         onClick = { onSelectColorMode(colorMode) },
@@ -622,7 +710,11 @@ fun QuickToolsBottomSheet(
             )
             Spacer(modifier = Modifier.height(s.sm))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                items(ReadingStatus.entries) { status ->
+                items(
+                    items = ReadingStatus.entries,
+                    key = { it.name },
+                    contentType = { "reading_status" }
+                ) { status ->
                     FilterChip(
                         selected = state.readingStatus == status,
                         onClick = { onSelectStatus(status) },

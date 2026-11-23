@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.example.data.local.AnnotationEntity
 import com.example.data.model.AnnotationType
 import com.example.data.model.PageFitPolicy
+import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.PdfPageDimension
 import com.example.ui.theme.TeenaTheme
@@ -67,8 +69,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun PdfDocumentViewport(
     state: ReaderUiState,
     pageGapSpacing: Boolean,
+    renderQuality: RenderQuality = RenderQuality.STANDARD,
     colorFilter: ColorFilter?,
     canvasColor: Color,
+    peekPage: (pageIndex: Int, targetWidthPx: Int) -> Bitmap? = { _, _ -> null },
     renderPage: suspend (pageIndex: Int, targetWidthPx: Int) -> Bitmap?,
     onPageChanged: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
@@ -124,7 +128,7 @@ fun PdfDocumentViewport(
             }
             .pointerInput(state.isZoomLocked, state.zoomScale, state.layoutMode) {
                 detectTransformGestures { _, pan, zoom, _ ->
-                    if (!state.isZoomLocked && zoom != 1f) {
+                    if (!state.isZoomLocked && kotlin.math.abs(zoom - 1f) > 0.01f) {
                         val updatedZoom = (state.zoomScale * zoom).coerceIn(1f, 4f)
                         onZoomChange(updatedZoom)
                     }
@@ -154,45 +158,55 @@ fun PdfDocumentViewport(
                 translationY = panOffset.y
             }
 
-        when (state.layoutMode) {
-            ScrollLayoutMode.VERTICAL -> {
-                VerticalPdfViewer(
-                    state = state,
-                    pageGapSpacing = pageGapSpacing,
-                    viewportWidthPx = viewportWidthPx,
-                    colorFilter = colorFilter,
-                    renderPage = renderPage,
-                    onPageChanged = onPageChanged,
-                    onPendingScrollConsumed = onPendingScrollConsumed,
-                    onStopAutoScroll = onStopAutoScroll,
-                    modifier = zoomModifier
-                )
-            }
+        if (state.pageCount <= 0) return@BoxWithConstraints
 
-            ScrollLayoutMode.HORIZONTAL, ScrollLayoutMode.SINGLE_PAGE -> {
-                HorizontalPdfViewer(
-                    state = state,
-                    viewportWidthPx = viewportWidthPx,
-                    colorFilter = colorFilter,
-                    renderPage = renderPage,
-                    onPageChanged = onPageChanged,
-                    onPendingScrollConsumed = onPendingScrollConsumed,
-                    onStopAutoScroll = onStopAutoScroll,
-                    modifier = zoomModifier
-                )
-            }
+        key(state.uriString) {
+            when (state.layoutMode) {
+                ScrollLayoutMode.VERTICAL -> {
+                    VerticalPdfViewer(
+                        state = state,
+                        pageGapSpacing = pageGapSpacing,
+                        renderQuality = renderQuality,
+                        viewportWidthPx = viewportWidthPx,
+                        colorFilter = colorFilter,
+                        peekPage = peekPage,
+                        renderPage = renderPage,
+                        onPageChanged = onPageChanged,
+                        onPendingScrollConsumed = onPendingScrollConsumed,
+                        onStopAutoScroll = onStopAutoScroll,
+                        modifier = zoomModifier
+                    )
+                }
 
-            ScrollLayoutMode.DUAL_PAGE -> {
-                DualPagePdfViewer(
-                    state = state,
-                    viewportWidthPx = (viewportWidthPx / 2).coerceAtLeast(360),
-                    colorFilter = colorFilter,
-                    renderPage = renderPage,
-                    onPageChanged = onPageChanged,
-                    onPendingScrollConsumed = onPendingScrollConsumed,
-                    onStopAutoScroll = onStopAutoScroll,
-                    modifier = zoomModifier
-                )
+                ScrollLayoutMode.HORIZONTAL, ScrollLayoutMode.SINGLE_PAGE -> {
+                    HorizontalPdfViewer(
+                        state = state,
+                        renderQuality = renderQuality,
+                        viewportWidthPx = viewportWidthPx,
+                        colorFilter = colorFilter,
+                        peekPage = peekPage,
+                        renderPage = renderPage,
+                        onPageChanged = onPageChanged,
+                        onPendingScrollConsumed = onPendingScrollConsumed,
+                        onStopAutoScroll = onStopAutoScroll,
+                        modifier = zoomModifier
+                    )
+                }
+
+                ScrollLayoutMode.DUAL_PAGE -> {
+                    DualPagePdfViewer(
+                        state = state,
+                        renderQuality = renderQuality,
+                        viewportWidthPx = (viewportWidthPx / 2).coerceAtLeast(360),
+                        colorFilter = colorFilter,
+                        peekPage = peekPage,
+                        renderPage = renderPage,
+                        onPageChanged = onPageChanged,
+                        onPendingScrollConsumed = onPendingScrollConsumed,
+                        onStopAutoScroll = onStopAutoScroll,
+                        modifier = zoomModifier
+                    )
+                }
             }
         }
     }
@@ -202,8 +216,10 @@ fun PdfDocumentViewport(
 private fun VerticalPdfViewer(
     state: ReaderUiState,
     pageGapSpacing: Boolean,
+    renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
     onPageChanged: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
@@ -215,7 +231,7 @@ private fun VerticalPdfViewer(
 
     LaunchedEffect(state.pendingScrollTargetPage) {
         val target = state.pendingScrollTargetPage ?: return@LaunchedEffect
-        if (target in 0 until state.pageCount) {
+        if (target in 0 until state.pageCount && listState.firstVisibleItemIndex != target) {
             listState.scrollToItem(target)
         }
         onPendingScrollConsumed()
@@ -242,6 +258,20 @@ private fun VerticalPdfViewer(
         }
     }
 
+    val annotationsByPage = remember(state.annotations) {
+        state.annotations.groupBy { it.pageIndex }
+    }
+    val bookmarkedPages = remember(state.bookmarks) {
+        state.bookmarks.map { it.pageIndex }.toSet()
+    }
+    val effectiveTargetWidthPx = remember(viewportWidthPx, state.pageFitPolicy) {
+        when (state.pageFitPolicy) {
+            PageFitPolicy.FIT_WIDTH -> viewportWidthPx
+            PageFitPolicy.FIT_HEIGHT -> (viewportWidthPx * 0.9f).toInt().coerceAtLeast(360)
+            PageFitPolicy.FIT_PAGE -> (viewportWidthPx * 0.84f).toInt().coerceAtLeast(360)
+        }
+    }
+
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(
@@ -252,10 +282,14 @@ private fun VerticalPdfViewer(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
     ) {
-        items(count = state.pageCount, key = { it }) { pageIndex ->
+        items(
+            count = state.pageCount,
+            key = { it },
+            contentType = { "pdf_page" }
+        ) { pageIndex ->
             val dim = state.pageDimensions.getOrElse(pageIndex) { PdfPageDimension(595, 842) }
-            val pageAnnotations = state.annotations.filter { it.pageIndex == pageIndex }
-            val isBookmarked = state.bookmarks.any { it.pageIndex == pageIndex }
+            val pageAnnotations = annotationsByPage[pageIndex].orEmpty()
+            val isBookmarked = pageIndex in bookmarkedPages
 
             PdfPageSurface(
                 uriString = state.uriString,
@@ -263,10 +297,12 @@ private fun VerticalPdfViewer(
                 dimension = dim,
                 fitPolicy = state.pageFitPolicy,
                 hideMargins = state.hideMargins,
+                renderQuality = renderQuality,
                 isBookmarked = isBookmarked,
                 pageAnnotations = pageAnnotations,
-                targetWidthPx = viewportWidthPx,
+                targetWidthPx = effectiveTargetWidthPx,
                 colorFilter = colorFilter,
+                peekPage = peekPage,
                 renderPage = renderPage,
                 modifier = when (state.pageFitPolicy) {
                     PageFitPolicy.FIT_WIDTH -> Modifier.fillMaxWidth()
@@ -281,8 +317,10 @@ private fun VerticalPdfViewer(
 @Composable
 private fun HorizontalPdfViewer(
     state: ReaderUiState,
+    renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
     onPageChanged: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
@@ -297,7 +335,7 @@ private fun HorizontalPdfViewer(
 
     LaunchedEffect(state.pendingScrollTargetPage) {
         val target = state.pendingScrollTargetPage ?: return@LaunchedEffect
-        if (target in 0 until state.pageCount) {
+        if (target in 0 until state.pageCount && pagerState.currentPage != target) {
             pagerState.scrollToPage(target)
         }
         onPendingScrollConsumed()
@@ -324,15 +362,23 @@ private fun HorizontalPdfViewer(
         }
     }
 
+    val annotationsByPage = remember(state.annotations) {
+        state.annotations.groupBy { it.pageIndex }
+    }
+    val bookmarkedPages = remember(state.bookmarks) {
+        state.bookmarks.map { it.pageIndex }.toSet()
+    }
+
     HorizontalPager(
         state = pagerState,
+        userScrollEnabled = state.zoomScale <= 1.05f,
         reverseLayout = state.isRtl,
         beyondViewportPageCount = 1,
         modifier = modifier
     ) { pageIndex ->
         val dim = state.pageDimensions.getOrElse(pageIndex) { PdfPageDimension(595, 842) }
-        val pageAnnotations = state.annotations.filter { it.pageIndex == pageIndex }
-        val isBookmarked = state.bookmarks.any { it.pageIndex == pageIndex }
+        val pageAnnotations = annotationsByPage[pageIndex].orEmpty()
+        val isBookmarked = pageIndex in bookmarkedPages
 
         Box(
             contentAlignment = Alignment.Center,
@@ -349,10 +395,12 @@ private fun HorizontalPdfViewer(
                 dimension = dim,
                 fitPolicy = state.pageFitPolicy,
                 hideMargins = state.hideMargins,
+                renderQuality = renderQuality,
                 isBookmarked = isBookmarked,
                 pageAnnotations = pageAnnotations,
                 targetWidthPx = viewportWidthPx,
                 colorFilter = colorFilter,
+                peekPage = peekPage,
                 renderPage = renderPage,
                 modifier = when (state.pageFitPolicy) {
                     PageFitPolicy.FIT_WIDTH -> Modifier.fillMaxWidth()
@@ -367,8 +415,10 @@ private fun HorizontalPdfViewer(
 @Composable
 private fun DualPagePdfViewer(
     state: ReaderUiState,
+    renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
     onPageChanged: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
@@ -385,7 +435,9 @@ private fun DualPagePdfViewer(
     LaunchedEffect(state.pendingScrollTargetPage) {
         val target = state.pendingScrollTargetPage ?: return@LaunchedEffect
         val spreadIndex = (target / 2).coerceIn(0, spreadCount - 1)
-        pagerState.scrollToPage(spreadIndex)
+        if (pagerState.currentPage != spreadIndex) {
+            pagerState.scrollToPage(spreadIndex)
+        }
         onPendingScrollConsumed()
     }
 
@@ -412,8 +464,16 @@ private fun DualPagePdfViewer(
         }
     }
 
+    val annotationsByPage = remember(state.annotations) {
+        state.annotations.groupBy { it.pageIndex }
+    }
+    val bookmarkedPages = remember(state.bookmarks) {
+        state.bookmarks.map { it.pageIndex }.toSet()
+    }
+
     HorizontalPager(
         state = pagerState,
+        userScrollEnabled = state.zoomScale <= 1.05f,
         reverseLayout = state.isRtl,
         beyondViewportPageCount = 1,
         modifier = modifier
@@ -438,10 +498,12 @@ private fun DualPagePdfViewer(
                     dimension = dim,
                     fitPolicy = state.pageFitPolicy,
                     hideMargins = state.hideMargins,
-                    isBookmarked = state.bookmarks.any { it.pageIndex == leftPage },
-                    pageAnnotations = state.annotations.filter { it.pageIndex == leftPage },
+                    renderQuality = renderQuality,
+                    isBookmarked = leftPage in bookmarkedPages,
+                    pageAnnotations = annotationsByPage[leftPage].orEmpty(),
                     targetWidthPx = viewportWidthPx,
                     colorFilter = colorFilter,
+                    peekPage = peekPage,
                     renderPage = renderPage,
                     modifier = Modifier.weight(1f)
                 )
@@ -457,10 +519,12 @@ private fun DualPagePdfViewer(
                     dimension = dim,
                     fitPolicy = state.pageFitPolicy,
                     hideMargins = state.hideMargins,
-                    isBookmarked = state.bookmarks.any { it.pageIndex == rightPage },
-                    pageAnnotations = state.annotations.filter { it.pageIndex == rightPage },
+                    renderQuality = renderQuality,
+                    isBookmarked = rightPage in bookmarkedPages,
+                    pageAnnotations = annotationsByPage[rightPage].orEmpty(),
                     targetWidthPx = viewportWidthPx,
                     colorFilter = colorFilter,
+                    peekPage = peekPage,
                     renderPage = renderPage,
                     modifier = Modifier.weight(1f)
                 )
@@ -478,10 +542,12 @@ private fun PdfPageSurface(
     dimension: PdfPageDimension,
     fitPolicy: PageFitPolicy,
     hideMargins: Boolean,
+    renderQuality: RenderQuality,
     isBookmarked: Boolean,
     pageAnnotations: List<AnnotationEntity>,
     targetWidthPx: Int,
     colorFilter: ColorFilter?,
+    peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
     modifier: Modifier = Modifier
 ) {
@@ -489,12 +555,35 @@ private fun PdfPageSurface(
     val sz = TeenaTheme.sizes
     val readerColors = TeenaTheme.colors.reader
 
-    var bitmap by remember(uriString, pageIndex, targetWidthPx, hideMargins) {
-        mutableStateOf<Bitmap?>(null)
+    var bitmap by remember(uriString, pageIndex) {
+        val initial = peekPage(pageIndex, targetWidthPx)
+            ?: if (pageIndex == 0 && !hideMargins) ThumbnailCache.peek(uriString) else null
+        mutableStateOf(initial)
     }
 
-    LaunchedEffect(uriString, pageIndex, targetWidthPx, hideMargins) {
-        bitmap = renderPage(pageIndex, targetWidthPx)
+    var showPageSpinner by remember(uriString, pageIndex) {
+        mutableStateOf(false)
+    }
+
+    LaunchedEffect(uriString, pageIndex, targetWidthPx, hideMargins, renderQuality) {
+        val instant = peekPage(pageIndex, targetWidthPx)
+        if (instant != null) {
+            bitmap = instant
+        } else {
+            val renderedPage = renderPage(pageIndex, targetWidthPx)
+            if (renderedPage != null) {
+                bitmap = renderedPage
+            }
+        }
+    }
+
+    LaunchedEffect(uriString, pageIndex, bitmap == null) {
+        if (bitmap == null) {
+            delay(180L)
+            showPageSpinner = true
+        } else {
+            showPageSpinner = false
+        }
     }
 
     val rendered = bitmap
@@ -523,7 +612,7 @@ private fun PdfPageSurface(
                     colorFilter = colorFilter,
                     modifier = Modifier.fillMaxSize()
                 )
-            } else {
+            } else if (showPageSpinner) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier.fillMaxSize()

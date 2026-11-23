@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -17,8 +18,20 @@ interface PdfDao {
     @Query("SELECT * FROM pdf_documents WHERE uriString = :uriString LIMIT 1")
     fun observeDocument(uriString: String): Flow<PdfDocumentEntity?>
 
+    @Query("SELECT uriString FROM pdf_documents")
+    suspend fun getAllDocumentUris(): List<String>
+
+    @Query("SELECT uriString FROM pdf_documents WHERE pageCount <= 0 ORDER BY lastOpenedAt DESC LIMIT :limit")
+    suspend fun getDocumentsMissingPageCount(limit: Int = 30): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertDocument(document: PdfDocumentEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertDocumentsIfAbsent(documents: List<PdfDocumentEntity>): List<Long>
+
+    @Query("UPDATE pdf_documents SET pageCount = :pageCount WHERE uriString = :uriString AND pageCount <= 0")
+    suspend fun fillMissingPageCount(uriString: String, pageCount: Int)
 
     @Query(
         "UPDATE pdf_documents SET currentPage = :page, pageCount = :pageCount, zoomScale = :zoomScale, lastOpenedAt = :timestamp, readingStatus = :status WHERE uriString = :uriString"
@@ -46,6 +59,19 @@ interface PdfDao {
 
     @Query("DELETE FROM pdf_documents")
     suspend fun clearAllDocuments()
+
+    @Query("DELETE FROM bookmarks")
+    suspend fun clearAllBookmarks()
+
+    @Query("DELETE FROM annotations")
+    suspend fun clearAllAnnotations()
+
+    @Transaction
+    suspend fun clearAllLibraryData() {
+        clearAllAnnotations()
+        clearAllBookmarks()
+        clearAllDocuments()
+    }
 
     @Query("SELECT * FROM bookmarks ORDER BY createdAt DESC")
     fun observeAllBookmarks(): Flow<List<BookmarkEntity>>

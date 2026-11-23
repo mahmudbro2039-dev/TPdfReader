@@ -49,66 +49,78 @@ class PdfLibraryRepository(
         pdfDao.getDocument(uriString)
 
     suspend fun ensureStarterGuideExists() = withContext(Dispatchers.IO) {
-        val guideFile = SamplePdfGenerator.ensureGuidePdfFile(context)
-        val guideUriString = Uri.fromFile(guideFile).toString()
-        if (pdfDao.getDocument(guideUriString) == null) {
-            val pages = pdfEngine.inspectPageCount(guideUriString).coerceAtLeast(1)
-            val now = System.currentTimeMillis()
-            pdfDao.upsertDocument(
-                PdfDocumentEntity(
-                    uriString = guideUriString,
-                    title = SamplePdfGenerator.GUIDE_TITLE,
-                    folderName = "Guides & Manuals",
-                    fileSizeBytes = guideFile.length(),
-                    pageCount = pages,
-                    currentPage = 0,
-                    readingStatus = ReadingStatus.READING.name,
-                    isFavorite = true,
-                    lastOpenedAt = now,
-                    addedAt = now
+        try {
+            val guideFile = SamplePdfGenerator.ensureGuidePdfFile(context)
+            val guideUriString = Uri.fromFile(guideFile).toString()
+            if (pdfDao.getDocument(guideUriString) == null) {
+                val pages = pdfEngine.inspectPageCount(guideUriString).coerceAtLeast(1)
+                val now = System.currentTimeMillis()
+                pdfDao.upsertDocument(
+                    PdfDocumentEntity(
+                        uriString = guideUriString,
+                        title = SamplePdfGenerator.GUIDE_TITLE,
+                        folderName = "Guides & Manuals",
+                        fileSizeBytes = guideFile.length(),
+                        pageCount = pages,
+                        currentPage = 0,
+                        readingStatus = ReadingStatus.READING.name,
+                        isFavorite = true,
+                        lastOpenedAt = now,
+                        addedAt = now
+                    )
                 )
-            )
-            // Seed a starter bookmark & highlight so Bookmarks and My Notes/Highlights showcase immediately
-            pdfDao.insertBookmark(
-                BookmarkEntity(
-                    documentUri = guideUriString,
-                    documentTitle = SamplePdfGenerator.GUIDE_TITLE,
-                    pageIndex = 1,
-                    title = "Every Tool, One Tap Away"
+                // Seed a starter bookmark & highlight so Bookmarks and My Notes/Highlights showcase immediately
+                pdfDao.insertBookmark(
+                    BookmarkEntity(
+                        documentUri = guideUriString,
+                        documentTitle = SamplePdfGenerator.GUIDE_TITLE,
+                        pageIndex = 1,
+                        title = "Every Tool, One Tap Away"
+                    )
                 )
-            )
-            pdfDao.insertAnnotation(
-                AnnotationEntity(
-                    documentUri = guideUriString,
-                    documentTitle = SamplePdfGenerator.GUIDE_TITLE,
-                    pageIndex = 0,
-                    type = AnnotationType.HIGHLIGHT.name,
-                    quotedText = "Tap anywhere in the center of a page to enter True Edge-to-Edge Full-Screen Mode.",
-                    noteText = "Full-screen mode with floating edge shortcut pills.",
-                    colorHex = "#FACC15"
+                pdfDao.insertAnnotation(
+                    AnnotationEntity(
+                        documentUri = guideUriString,
+                        documentTitle = SamplePdfGenerator.GUIDE_TITLE,
+                        pageIndex = 0,
+                        type = AnnotationType.HIGHLIGHT.name,
+                        quotedText = "Tap anywhere in the center of a page to enter True Edge-to-Edge Full-Screen Mode.",
+                        noteText = "Full-screen mode with floating edge shortcut pills.",
+                        colorHex = "#FACC15"
+                    )
                 )
-            )
+            }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            // Non-fatal: starter sample creation should never crash startup on constrained storage.
         }
 
-        val archFile = SamplePdfGenerator.ensureArchitecturePdfFile(context)
-        val archUriString = Uri.fromFile(archFile).toString()
-        if (pdfDao.getDocument(archUriString) == null) {
-            val pages = pdfEngine.inspectPageCount(archUriString).coerceAtLeast(1)
-            val now = System.currentTimeMillis() - 3_600_000L
-            pdfDao.upsertDocument(
-                PdfDocumentEntity(
-                    uriString = archUriString,
-                    title = SamplePdfGenerator.ARCH_TITLE,
-                    folderName = "Books & Research",
-                    fileSizeBytes = archFile.length(),
-                    pageCount = pages,
-                    currentPage = 0,
-                    readingStatus = ReadingStatus.TO_READ.name,
-                    isFavorite = false,
-                    lastOpenedAt = now,
-                    addedAt = now
+        try {
+            val archFile = SamplePdfGenerator.ensureArchitecturePdfFile(context)
+            val archUriString = Uri.fromFile(archFile).toString()
+            if (pdfDao.getDocument(archUriString) == null) {
+                val pages = pdfEngine.inspectPageCount(archUriString).coerceAtLeast(1)
+                val now = System.currentTimeMillis() - 3_600_000L
+                pdfDao.upsertDocument(
+                    PdfDocumentEntity(
+                        uriString = archUriString,
+                        title = SamplePdfGenerator.ARCH_TITLE,
+                        folderName = "Books & Research",
+                        fileSizeBytes = archFile.length(),
+                        pageCount = pages,
+                        currentPage = 0,
+                        readingStatus = ReadingStatus.TO_READ.name,
+                        isFavorite = false,
+                        lastOpenedAt = now,
+                        addedAt = now
+                    )
                 )
-            )
+            }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            // Non-fatal: starter sample creation should never crash startup on constrained storage.
         }
     }
 
@@ -199,7 +211,7 @@ class PdfLibraryRepository(
     }
 
     suspend fun clearAllHistory() {
-        pdfDao.clearAllDocuments()
+        pdfDao.clearAllLibraryData()
     }
 
     suspend fun addBookmark(
@@ -338,10 +350,43 @@ class PdfLibraryRepository(
         return true
     }
 
+    suspend fun resolveDocumentTitle(uriString: String): String = withContext(Dispatchers.IO) {
+        if (uriString.isBlank()) return@withContext ""
+        val savedTitle = pdfDao.getDocument(uriString)?.title?.trim()
+        if (!savedTitle.isNullOrBlank()) return@withContext savedTitle
+        val uri = Uri.parse(uriString)
+        val (displayName, _, _) = queryMetadata(uri)
+        displayName.trim().ifBlank { fallbackTitleFromUri(uriString) }
+    }
+
+    fun fallbackTitleFromUri(uriString: String): String {
+        if (uriString.isBlank()) return ""
+        val uri = runCatching { Uri.parse(uriString) }.getOrNull() ?: return ""
+        val rawSegment = uri.lastPathSegment
+            ?: uri.path
+            ?: return ""
+        val decodedSegment = runCatching { Uri.decode(rawSegment) }.getOrDefault(rawSegment)
+        val fileName = decodedSegment
+            .substringAfterLast('/')
+            .substringAfterLast(':')
+            .trim()
+        val stripped = if (fileName.endsWith(".pdf", ignoreCase = true)) {
+            fileName.dropLast(4)
+        } else {
+            fileName
+        }
+        return stripped.trim()
+    }
+
     private fun queryMetadata(uri: Uri): Triple<String, Long, String> {
         if (uri.scheme == "file") {
             val file = File(uri.path ?: "")
-            val cleanName = file.name.removeSuffix(".pdf").removeSuffix(".PDF")
+            val rawName = file.name
+            val cleanName = if (rawName.endsWith(".pdf", ignoreCase = true)) {
+                rawName.dropLast(4)
+            } else {
+                rawName
+            }.trim().ifBlank { "PDF Document" }
             val parentFolder = file.parentFile?.name?.takeIf { it.isNotBlank() } ?: "Internal Storage"
             return Triple(cleanName, file.length(), parentFolder)
         }
@@ -364,8 +409,14 @@ class PdfLibraryRepository(
                 }
             }
         }
-        val cleanName = name.removeSuffix(".pdf").removeSuffix(".PDF")
-            .ifBlank { uri.lastPathSegment?.substringAfterLast('/')?.removeSuffix(".pdf") ?: "PDF Document" }
+        val trimmedName = name.trim()
+        val cleanName = (if (trimmedName.endsWith(".pdf", ignoreCase = true)) {
+            trimmedName.dropLast(4)
+        } else {
+            trimmedName
+        }).trim().ifBlank {
+            fallbackTitleFromUri(uri.toString()).ifBlank { "PDF Document" }
+        }
 
         val rawSegment = Uri.decode(uri.lastPathSegment ?: "")
         val parentFolder = when {

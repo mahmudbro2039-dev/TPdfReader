@@ -10,8 +10,11 @@ import com.example.data.model.PageFitPolicy
 import com.example.data.model.PdfColorMode
 import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
+import com.example.data.pdf.DevicePdfScanner
 import com.example.data.pdf.PdfEngine
+import com.example.data.pdf.PdfScanProgress
 import com.example.data.repository.PdfLibraryRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -20,8 +23,12 @@ import kotlinx.coroutines.launch
 class SettingsViewModel(
     private val preferencesRepository: PreferencesRepository,
     private val libraryRepository: PdfLibraryRepository,
-    private val pdfEngine: PdfEngine
+    private val pdfEngine: PdfEngine,
+    private val devicePdfScanner: DevicePdfScanner? = null
 ) : ViewModel() {
+
+    val scanProgress: StateFlow<PdfScanProgress> =
+        devicePdfScanner?.progress ?: MutableStateFlow(PdfScanProgress())
 
     val preferences: StateFlow<UserPreferences> = preferencesRepository.preferencesFlow
         .stateIn(
@@ -97,15 +104,29 @@ class SettingsViewModel(
         onDone()
     }
 
+    fun rescanDevicePdfs(onDone: (PdfScanProgress) -> Unit) {
+        val scanner = devicePdfScanner ?: return
+        viewModelScope.launch {
+            val result = scanner.scanDevicePdfs()
+            onDone(result)
+        }
+    }
+
     companion object {
         fun factory(
             preferencesRepository: PreferencesRepository,
             libraryRepository: PdfLibraryRepository,
-            pdfEngine: PdfEngine
+            pdfEngine: PdfEngine,
+            devicePdfScanner: DevicePdfScanner? = null
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return SettingsViewModel(preferencesRepository, libraryRepository, pdfEngine) as T
+                return SettingsViewModel(
+                    preferencesRepository = preferencesRepository,
+                    libraryRepository = libraryRepository,
+                    pdfEngine = pdfEngine,
+                    devicePdfScanner = devicePdfScanner
+                ) as T
             }
         }
     }

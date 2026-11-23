@@ -11,3 +11,5 @@ val TeenaShapes = Shapes(
     large = RoundedCornerShape(20.dp),
     extraLarge = RoundedCornerShape(28.dp)
 )
+
+val EdgeHandleShape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)

@@ -1,5 +1,6 @@
 package com.example.ui.theme
 
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatMode
@@ -7,6 +8,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 
 @Immutable
@@ -20,24 +22,31 @@ data class Spacing(
     val xl: Dp = 24.dp,
     val xxl: Dp = 32.dp,
     val screenH: Dp = 16.dp,
+    val badgePad: Dp = 6.dp,
     val gridGapH: Dp = 12.dp,
     val gridGapV: Dp = 16.dp,
-    val listBottom: Dp = 96.dp,           // so FAB never hides the last item
+    val listBottom: Dp = 24.dp,
     val readerBarClearance: Dp = 136.dp
 )
 
 @Immutable
 data class Sizes(
-    val topBarHeight: Dp = 64.dp,
-    val searchHeight: Dp = 44.dp,
-    val searchButton: Dp = 36.dp,
-    val searchIcon: Dp = 18.dp,
+    val topBarHeight: Dp = 54.dp,
+    val searchHeight: Dp = 36.dp,
+    val searchButton: Dp = 28.dp,
+    val heroPlayButton: Dp = 36.dp,
+    val searchIcon: Dp = 16.dp,
     val iconButton: Dp = 48.dp,           // min touch target
     val hairline: Dp = 1.dp,
     val borderThick: Dp = 2.dp,
     val progressHeight: Dp = 4.dp,
+    val compactProgressHeight: Dp = 3.dp,
     val thumbWidth: Dp = 60.dp,           // height = width * 1.414 (A4)
-    val heroThumbWidth: Dp = 76.dp,
+    val compactThumbWidth: Dp = 44.dp,
+    val heroThumbWidth: Dp = 56.dp,
+    val bottomBarHeight: Dp = 62.dp,
+    val bottomBarMaxWidth: Dp = 420.dp,
+    val bottomNavIcon: Dp = 20.dp,
     val folderIconBox: Dp = 48.dp,
     val iconXs: Dp = 14.dp,
     val iconSm: Dp = 16.dp,
@@ -46,13 +55,18 @@ data class Sizes(
     val emptyCircle: Dp = 72.dp,
     val gridMinCell: Dp = 96.dp,          // 3 columns on 360dp+ phones, 2 on 320dp, more on tablets
     val coverRatio: Float = 3f / 4f,      // width / height
-    val progressBadge: Dp = 40.dp,
-    val ringStroke: Dp = 3.dp,
-    val ringInset: Dp = 4.dp,
+    val folderGridMinCell: Dp = 148.dp,   // 2 columns on phones, 3+ on tablets
+    val folderPreviewRatio: Float = 16f / 10f,
+    val folderMiniCoverWidth: Dp = 54.dp,
+    val folderMiniCoverOffsetX: Dp = 18.dp,
+    val folderMiniCoverOffsetY: Dp = 4.dp,
+    val progressBadge: Dp = 34.dp,
+    val ringStroke: Dp = 2.5.dp,
+    val ringInset: Dp = 3.dp,
     val badgeElevation: Dp = 3.dp,
     val coverMenuHit: Dp = 48.dp,         // minimum accessible touch target
-    val coverMenuVisual: Dp = 28.dp,      // visible scrim circle
-    val coverMenuIcon: Dp = 18.dp,
+    val coverMenuVisual: Dp = 26.dp,      // visible scrim circle
+    val coverMenuIcon: Dp = 16.dp,
     val zeroElevation: Dp = 0.dp,
     val cardElevation: Dp = 2.dp,
     val fabElevation: Dp = 4.dp,
@@ -61,7 +75,7 @@ data class Sizes(
     val fadeEdgeWidth: Dp = 32.dp,
     val shimmerTitleHeight: Dp = 18.dp,
     val shimmerMetaHeight: Dp = 14.dp,
-    val shimmerHeroHeight: Dp = 164.dp,
+    val shimmerHeroHeight: Dp = 112.dp,
     val shimmerRowHeight: Dp = 104.dp,
     val sheetListMaxHeight: Dp = 380.dp,
     val signaturePadHeight: Dp = 180.dp,
@@ -81,7 +95,12 @@ data class Sizes(
     val linkIconBox: Dp = 40.dp,
     val dialogMaxWidth: Dp = 600.dp,
     val colorDotSize: Dp = 12.dp,
-    val statusDotSize: Dp = 8.dp
+    val statusDotSize: Dp = 8.dp,
+    val edgeHandleWidth: Dp = 26.dp,
+    val edgeHandleHeight: Dp = 56.dp,
+    val edgeSwipeStripWidth: Dp = 28.dp,
+    val fullscreenBadgeSize: Dp = 36.dp,
+    val quickMenuTileSize: Dp = 44.dp
 )
 
 @Immutable
@@ -95,6 +114,8 @@ data class Motion(
     fun <T> fastSpec(): FiniteAnimationSpec<T> = tween(durationMillis = fast)
     fun <T> normalSpec(): FiniteAnimationSpec<T> = tween(durationMillis = normal)
     fun <T> slowSpec(): FiniteAnimationSpec<T> = tween(durationMillis = slow)
+    fun navFadeSpec(): FiniteAnimationSpec<Float> = tween(durationMillis = fast, easing = FastOutSlowInEasing)
+    fun navSlideSpec(): FiniteAnimationSpec<IntOffset> = tween(durationMillis = normal, easing = FastOutSlowInEasing)
     fun shimmerSpec(): InfiniteRepeatableSpec<Float> = infiniteRepeatable(
         animation = tween(durationMillis = shimmer),
         repeatMode = RepeatMode.Reverse

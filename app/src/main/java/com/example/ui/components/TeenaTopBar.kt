@@ -14,8 +14,8 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -30,9 +30,11 @@ import androidx.compose.material.icons.automirrored.rounded.ViewList
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.FindInPage
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material3.DropdownMenu
@@ -91,6 +93,8 @@ data class TopBarMenuCallbacks(
     val onToggleDeepSearch: () -> Unit,
     val onOpenSort: () -> Unit,
     val onToggleViewMode: () -> Unit,
+    val onPickPdf: () -> Unit = {},
+    val onRescanDevice: () -> Unit = {},
     val onOpenSettings: () -> Unit,
     val onOpenAbout: () -> Unit
 )
@@ -105,10 +109,16 @@ fun buildMenu(
 ): List<MenuAction> {
     val items = mutableListOf<MenuAction>()
     items += MenuAction(
+        label = stringResource(R.string.open_pdf),
+        icon = Icons.Rounded.FolderOpen,
+        onClick = callbacks.onPickPdf
+    )
+    items += MenuAction(
         label = stringResource(R.string.menu_dark_mode),
         icon = Icons.Rounded.DarkMode,
         onClick = callbacks.onToggleDarkMode,
-        checked = isDark
+        checked = isDark,
+        dividerBefore = true
     )
     items += MenuAction(
         label = stringResource(R.string.menu_deep_search),
@@ -132,10 +142,15 @@ fun buildMenu(
         )
     }
     items += MenuAction(
+        label = stringResource(R.string.scanner_rescan_menu),
+        icon = Icons.Rounded.Refresh,
+        onClick = callbacks.onRescanDevice,
+        dividerBefore = true
+    )
+    items += MenuAction(
         label = stringResource(R.string.menu_settings),
         icon = Icons.Rounded.Settings,
-        onClick = callbacks.onOpenSettings,
-        dividerBefore = true
+        onClick = callbacks.onOpenSettings
     )
     items += MenuAction(
         label = stringResource(R.string.menu_about),
@@ -158,18 +173,24 @@ fun TeenaTopBar(
     val motion = TeenaTheme.motion
     var focused by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
-    BackHandler(enabled = focused) { focusManager.clearFocus() }
+    BackHandler(enabled = focused || query.isNotEmpty()) {
+        if (focused) {
+            focusManager.clearFocus()
+        } else {
+            onQueryChange("")
+        }
+    }
 
     Surface(color = MaterialTheme.colorScheme.background, modifier = modifier) {
         Row(
             modifier = Modifier
                 .statusBarsPadding()
-                .height(sz.topBarHeight)
-                .padding(start = s.screenH, end = s.xs),
+                .heightIn(min = sz.topBarHeight)
+                .padding(start = s.screenH, end = s.xs, top = s.xxs, bottom = s.xxs),
             verticalAlignment = Alignment.CenterVertically
         ) {
             AnimatedVisibility(
-                visible = !focused,
+                visible = !focused && query.isEmpty(),
                 enter = fadeIn(motion.normalSpec()) + expandHorizontally(motion.normalSpec()),
                 exit = fadeOut(motion.fastSpec()) + shrinkHorizontally(motion.fastSpec())
             ) {
@@ -226,11 +247,15 @@ fun TeenaSearchField(
     val isFocused by interaction.collectIsFocusedAsState()
     LaunchedEffect(isFocused) { onFocusChange(isFocused) }
 
+    val borderColor = if (isFocused) cs.primary.copy(alpha = 0.55f) else c.hairline.copy(alpha = 0.7f)
+    val searchPillBg = if (isFocused || query.isNotEmpty()) cs.primaryContainer else cs.surfaceVariant
+    val searchIconTint = if (isFocused || query.isNotEmpty()) cs.primary else cs.onSurfaceVariant
+
     BasicTextField(
         value = query,
         onValueChange = onQueryChange,
         singleLine = true,
-        textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
+        textStyle = MaterialTheme.typography.bodySmall.copy(color = cs.onSurface),
         cursorBrush = SolidColor(cs.primary),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = {
@@ -239,30 +264,38 @@ fun TeenaSearchField(
         }),
         interactionSource = interaction,
         modifier = modifier
-            .height(sz.searchHeight)
+            .heightIn(min = sz.searchHeight)
             .testTag("top_search_field"),
         decorationBox = { inner ->
             Row(
                 modifier = Modifier
-                    .fillMaxSize()
+                    .fillMaxWidth()
+                    .heightIn(min = sz.searchHeight)
                     .clip(CircleShape)
                     .background(c.searchBg)
-                    .border(sz.hairline, if (isFocused) cs.primary else c.hairline, CircleShape)
-                    .padding(start = s.lg, end = s.xs),
+                    .border(sz.hairline, borderColor, CircleShape)
+                    .padding(start = s.md, end = s.xs),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(Modifier.weight(1f)) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(vertical = s.xxs),
+                    contentAlignment = Alignment.CenterStart
+                ) {
                     if (query.isEmpty()) {
                         Text(
                             text = stringResource(R.string.search_hint),
                             maxLines = 1,
+                            softWrap = false,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = cs.onSurfaceVariant
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant.copy(alpha = 0.8f)
                         )
                     }
                     inner()
                 }
+                Spacer(Modifier.width(s.xs))
                 if (query.isNotEmpty()) {
                     IconButton(
                         onClick = { onQueryChange("") },
@@ -273,16 +306,17 @@ fun TeenaSearchField(
                         Icon(
                             imageVector = Icons.Rounded.Close,
                             contentDescription = stringResource(R.string.clear),
-                            modifier = Modifier.size(sz.iconSm),
+                            modifier = Modifier.size(sz.iconXs),
                             tint = cs.onSurfaceVariant
                         )
                     }
+                    Spacer(Modifier.width(s.xxs))
                 }
                 Box(
                     modifier = Modifier
                         .size(sz.searchButton)
                         .clip(CircleShape)
-                        .background(cs.primary)
+                        .background(searchPillBg)
                         .clickable {
                             onSearch(query)
                             focusManager.clearFocus()
@@ -294,7 +328,7 @@ fun TeenaSearchField(
                         imageVector = Icons.Rounded.Search,
                         contentDescription = stringResource(R.string.search),
                         modifier = Modifier.size(sz.searchIcon),
-                        tint = cs.onPrimary
+                        tint = searchIconTint
                     )
                 }
             }

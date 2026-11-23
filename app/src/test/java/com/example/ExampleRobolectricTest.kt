@@ -12,12 +12,14 @@ import com.example.ui.model.percent
 import com.example.ui.model.progress
 import com.example.ui.theme.ReadingStatus as UiReadingStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -98,5 +100,75 @@ class ExampleRobolectricTest {
         assertEquals(2, toc.size)
         assertTrue(links.any { it.urlOrTarget.contains("example.com") })
         assertTrue(links.any { it.isInternalPageLink && it.targetPageIndex == 0 })
+    }
+
+    @Test
+    fun `normalized search matches across line breaks and collapses whitespace`() {
+        val multiline = "Clean\n   Architecture\tPrinciples"
+        assertTrue(PdfTextExtractor.containsNormalized(multiline, "clean architecture"))
+        assertTrue(PdfTextExtractor.containsNormalized(multiline, "  architecture   principles "))
+        assertFalse(PdfTextExtractor.containsNormalized(multiline, "   "))
+        assertFalse(PdfTextExtractor.containsNormalized(multiline, "monolith"))
+    }
+
+    @Test
+    fun `pdf extractor decodes hex strings and skips stream substrings in keys`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val extractor = PdfTextExtractor(context)
+        val tempPdf = File(context.cacheDir, "search_hex_test.pdf")
+        try {
+            // Includes '/Producer (stream-writer)' before the real stream keyword plus 1-byte and UTF-16BE hex strings.
+            tempPdf.writeText(
+                """
+                %PDF-1.4
+                1 0 obj
+                << /Producer (stream-writer) /Length 96 >>
+                stream
+                BT
+                <48656C6C6F> Tj
+                <FEFF0057006F0072006C0064> Tj
+                ET
+                endstream
+                endobj
+                """.trimIndent()
+            )
+            val pages = kotlinx.coroutines.runBlocking {
+                extractor.extractPagesText("file://${tempPdf.absolutePath}", 1)
+            }
+            assertEquals(1, pages.size)
+            assertTrue(PdfTextExtractor.containsNormalized(pages[0], "Hello World"))
+        } finally {
+            tempPdf.delete()
+        }
+    }
+
+    @Test
+    fun `reader route uri encoding preserves percent-encoded content and file URIs`() {
+        val safUri = "content://com.android.externalstorage.documents/document/primary%3ADownload%2FMy%20Book.pdf"
+        val encodedSaf = encodeReaderRouteUri(safUri)
+        assertFalse(encodedSaf.contains("%"))
+        assertFalse(encodedSaf.contains("/"))
+        assertEquals(safUri, decodeReaderRouteUri(encodedSaf))
+
+        val guideUri = "file:///data/user/0/com.example/files/Guides%20%26%20Manuals/MJ_PDF_Quick_Guide.pdf"
+        assertEquals(guideUri, decodeReaderRouteUri(encodeReaderRouteUri(guideUri)))
+
+        // Raw URI passthrough fallback
+        assertEquals(safUri, decodeReaderRouteUri(safUri))
+    }
+
+    @Test
+    fun `fallbackTitleFromUri extracts clean document title without pdf extension`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = AppContainer(context).libraryRepository
+
+        val safUri = "content://com.android.externalstorage.documents/document/primary%3ADownload%2FPhysics_Notes.PDF"
+        assertEquals("Physics_Notes", repo.fallbackTitleFromUri(safUri))
+
+        val colonOnlyUri = "content://com.android.externalstorage.documents/document/primary%3ACleanCode.pdf"
+        assertEquals("CleanCode", repo.fallbackTitleFromUri(colonOnlyUri))
+
+        val fileUri = "file:///data/user/0/com.example/files/Books%20%26%20Research/Clean_Architecture_Handbook.pdf"
+        assertEquals("Clean_Architecture_Handbook", repo.fallbackTitleFromUri(fileUri))
     }
 }

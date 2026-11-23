@@ -2,6 +2,7 @@ package com.example.data.pdf
 
 import android.content.Context
 import android.net.Uri
+import android.util.LruCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -18,11 +19,24 @@ class PdfTextExtractor(private val context: Context) {
 
     private val urlRegex = Regex("""https?://[^\s)\]"'<>]+""", RegexOption.IGNORE_CASE)
     private val pageRefRegex = Regex("""(?:Page|Chapter)\s+0?(\d{1,4})""", RegexOption.IGNORE_CASE)
+    private val extractedPagesCache = LruCache<String, List<String>>(16)
+
+    fun invalidateCache(uriString: String) {
+        synchronized(extractedPagesCache) {
+            extractedPagesCache.remove(uriString)
+        }
+    }
 
     suspend fun extractPagesText(uriString: String, totalPages: Int): List<String> =
         withContext(Dispatchers.IO) {
             SamplePdfGenerator.getCompanionTextForUri(context, uriString)?.let { companionPages ->
                 return@withContext companionPages
+            }
+
+            synchronized(extractedPagesCache) {
+                extractedPagesCache.get(uriString)?.let { cached ->
+                    if (totalPages <= 0 || cached.size == totalPages) return@withContext cached
+                }
             }
 
             val rawBytes = readBytes(uriString) ?: return@withContext List(totalPages.coerceAtLeast(1)) { "" }
@@ -34,7 +48,9 @@ class PdfTextExtractor(private val context: Context) {
             }
 
             if (totalPages <= 1) {
-                return@withContext listOf(extractedBlocks.joinToString("\n\n"))
+                val single = listOf(extractedBlocks.joinToString("\n\n"))
+                synchronized(extractedPagesCache) { extractedPagesCache.put(uriString, single) }
+                return@withContext single
             }
 
             val result = MutableList(totalPages) { "" }
@@ -64,6 +80,7 @@ class PdfTextExtractor(private val context: Context) {
                     }
                 }
             }
+            synchronized(extractedPagesCache) { extractedPagesCache.put(uriString, result) }
             result
         }
 
@@ -170,10 +187,18 @@ class PdfTextExtractor(private val context: Context) {
             val streamMarker = latin1.indexOf("stream", searchIndex)
             if (streamMarker < 0) break
 
-            val headerStart = (streamMarker - 320).coerceAtLeast(0)
+            if (!isStreamKeyword(latin1, streamMarker)) {
+                searchIndex = streamMarker + 6
+                continue
+            }
+
+            val headerStart = (streamMarker - 512).coerceAtLeast(0)
             val headerSnippet = latin1.substring(headerStart, streamMarker)
             val isFlate = headerSnippet.contains("/FlateDecode")
-            val isImage = headerSnippet.contains("/Subtype /Image") || headerSnippet.contains("/Subtype/Image")
+            val isSkipStream = headerSnippet.contains("/Subtype /Image") ||
+                headerSnippet.contains("/Subtype/Image") ||
+                headerSnippet.contains("/FontFile") ||
+                headerSnippet.contains("/Metadata")
 
             var dataStart = streamMarker + 6
             if (dataStart < rawBytes.size && rawBytes[dataStart] == '\r'.code.toByte()) dataStart++
@@ -184,7 +209,7 @@ class PdfTextExtractor(private val context: Context) {
 
             searchIndex = endStreamMarker + 9
 
-            if (isImage) continue
+            if (isSkipStream) continue
 
             val dataEnd = endStreamMarker.coerceAtMost(rawBytes.size)
             if (dataEnd <= dataStart) continue
@@ -199,7 +224,7 @@ class PdfTextExtractor(private val context: Context) {
             }
 
             val parsed = parseTextOperators(contentStream).trim()
-            if (parsed.length >= 12) {
+            if (parsed.isNotBlank()) {
                 blocks.add(parsed)
             }
         }
@@ -211,8 +236,8 @@ class PdfTextExtractor(private val context: Context) {
             val inflater = Inflater()
             try {
                 inflater.setInput(compressed)
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(4096)
+                val output = ByteArrayOutputStream((compressed.size * 3).coerceIn(1024, 131_072))
+                val buffer = ByteArray(8192)
                 var guard = 0
                 while (!inflater.finished() && guard < 1500) {
                     val count = inflater.inflate(buffer)
@@ -259,6 +284,15 @@ class PdfTextExtractor(private val context: Context) {
                     if (literal.isNotEmpty()) sb.append(literal)
                     i = nextIndex
                 }
+                '<' -> {
+                    if (i + 1 < len && stream[i + 1] == '<') {
+                        i += 2
+                    } else {
+                        val (hexText, nextIndex) = readPdfHexString(stream, i)
+                        if (hexText.isNotEmpty()) sb.append(hexText)
+                        i = nextIndex
+                    }
+                }
                 '[' -> {
                     val (arrayText, nextIndex) = readPdfArrayText(stream, i)
                     if (arrayText.isNotEmpty()) sb.append(arrayText)
@@ -267,6 +301,9 @@ class PdfTextExtractor(private val context: Context) {
                 'T' -> {
                     if (i + 1 < len && (stream[i + 1] == 'd' || stream[i + 1] == 'D' || stream[i + 1] == '*')) {
                         if (sb.isNotEmpty() && !sb.endsWith("\n")) sb.append('\n')
+                        i += 2
+                    } else if (i + 1 < len && (stream[i + 1] == 'j' || stream[i + 1] == 'J')) {
+                        if (sb.isNotEmpty() && !sb.last().isWhitespace()) sb.append(' ')
                         i += 2
                     } else {
                         i++
@@ -294,13 +331,14 @@ class PdfTextExtractor(private val context: Context) {
                         't' -> out.append(' ')
                         '(', ')', '\\' -> out.append(next)
                         else -> if (next in '0'..'7') {
-                            var oct = ""
+                            var code = 0
+                            var digits = 0
                             var k = i + 1
-                            while (k < stream.length && oct.length < 3 && stream[k] in '0'..'7') {
-                                oct += stream[k]
+                            while (k < stream.length && digits < 3 && stream[k] in '0'..'7') {
+                                code = (code shl 3) or (stream[k] - '0')
+                                digits++
                                 k++
                             }
-                            val code = oct.toIntOrNull(8) ?: 32
                             if (code in 32..126) out.append(code.toChar())
                             i = k - 2
                         } else {
@@ -338,6 +376,15 @@ class PdfTextExtractor(private val context: Context) {
                     out.append(piece)
                     i = next
                 }
+                stream[i] == '<' -> {
+                    if (i + 1 < stream.length && stream[i + 1] == '<') {
+                        i += 2
+                    } else {
+                        val (piece, next) = readPdfHexString(stream, i)
+                        out.append(piece)
+                        i = next
+                    }
+                }
                 stream[i] == '-' || stream[i].isDigit() -> {
                     val numStart = i
                     i++
@@ -353,10 +400,75 @@ class PdfTextExtractor(private val context: Context) {
         return out.toString() to (i + 1).coerceAtMost(stream.length)
     }
 
+    private fun readPdfHexString(stream: String, startIndex: Int): Pair<String, Int> {
+        val hex = StringBuilder()
+        var i = startIndex + 1
+        while (i < stream.length && stream[i] != '>') {
+            val ch = stream[i]
+            if (ch in '0'..'9' || ch in 'a'..'f' || ch in 'A'..'F') {
+                hex.append(ch)
+            }
+            i++
+        }
+        val nextIndex = if (i < stream.length && stream[i] == '>') i + 1 else i
+        if (hex.length < 2) return "" to nextIndex
+        if (hex.length % 2 != 0) hex.append('0')
+
+        val byteCount = hex.length / 2
+        val bytes = ByteArray(byteCount)
+        for (b in 0 until byteCount) {
+            val hi = hexNibble(hex[b * 2])
+            val lo = hexNibble(hex[b * 2 + 1])
+            bytes[b] = ((hi shl 4) or lo).toByte()
+        }
+
+        // Check for UTF-16BE (either BOM FEFF or 00xx ASCII-in-UTF16 pattern)
+        val looksUtf16Be = (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) ||
+            (bytes.size >= 4 && bytes.size % 2 == 0 && (0 until bytes.size step 2).count { bytes[it] == 0.toByte() } * 2 >= bytes.size / 2)
+
+        val decoded = if (looksUtf16Be) {
+            val offset = if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) 2 else 0
+            val sb = StringBuilder(bytes.size / 2)
+            var idx = offset
+            while (idx + 1 < bytes.size) {
+                val code = ((bytes[idx].toInt() and 0xFF) shl 8) or (bytes[idx + 1].toInt() and 0xFF)
+                if (code in 32..126 || code >= 160) sb.append(code.toChar())
+                idx += 2
+            }
+            sb.toString()
+        } else {
+            val sb = StringBuilder(bytes.size)
+            for (b in bytes) {
+                val code = b.toInt() and 0xFF
+                if (code in 32..126 || code >= 160) sb.append(code.toChar())
+            }
+            sb.toString()
+        }
+        return decoded to nextIndex
+    }
+
+    private fun hexNibble(ch: Char): Int = when (ch) {
+        in '0'..'9' -> ch - '0'
+        in 'a'..'f' -> ch - 'a' + 10
+        in 'A'..'F' -> ch - 'A' + 10
+        else -> 0
+    }
+
+    private fun isStreamKeyword(text: String, index: Int): Boolean {
+        if (index > 0) {
+            val prev = text[index - 1]
+            if (!prev.isWhitespace() && prev != '>' && prev != ']') return false
+        }
+        val afterIndex = index + 6
+        if (afterIndex >= text.length) return false
+        val after = text[afterIndex]
+        return after == '\r' || after == '\n'
+    }
+
     private fun cleanExtractedText(raw: String): String {
         return raw
-            .replace(Regex("[ \\t]+"), " ")
-            .replace(Regex("\\n{3,}"), "\n\n")
+            .replace(horizontalSpaceRegex, " ")
+            .replace(multiNewlineRegex, "\n\n")
             .lines()
             .joinToString("\n") { it.trim() }
             .trim()
@@ -365,6 +477,20 @@ class PdfTextExtractor(private val context: Context) {
     private fun isBoundary(text: String, index: Int): Boolean {
         if (index < 0 || index >= text.length) return true
         return text[index].isWhitespace() || text[index] in "[]()<>/%"
+    }
+
+    companion object {
+        private val whitespaceRegex = Regex("\\s+")
+        private val horizontalSpaceRegex = Regex("[ \\t]+")
+        private val multiNewlineRegex = Regex("\\n{3,}")
+
+        fun containsNormalized(haystack: String, query: String): Boolean {
+            val needle = query.trim().replace(whitespaceRegex, " ")
+            if (needle.isEmpty()) return false
+            if (haystack.contains(needle, ignoreCase = true)) return true
+            val normalizedHaystack = haystack.replace(whitespaceRegex, " ")
+            return normalizedHaystack.contains(needle, ignoreCase = true)
+        }
     }
 
     private fun readBytes(uriString: String): ByteArray? {

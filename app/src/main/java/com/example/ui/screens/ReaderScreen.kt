@@ -4,14 +4,18 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,12 +30,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.automirrored.filled.Subject
-import androidx.compose.material.icons.automirrored.filled.Toc
-import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
@@ -41,26 +45,22 @@ import androidx.compose.material.icons.filled.Contrast
 import androidx.compose.material.icons.filled.CropFree
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Highlight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.ScreenRotation
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.ViewAgenda
-import androidx.compose.material.icons.filled.ViewCarousel
-import androidx.compose.material.icons.filled.ViewDay
+import androidx.compose.material.icons.rounded.Fullscreen
+import androidx.compose.material.icons.rounded.FullscreenExit
+import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -79,12 +79,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -92,7 +96,6 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.PdfColorMode
-import com.example.data.model.ScrollLayoutMode
 import com.example.ui.components.AnnotationsBottomSheet
 import com.example.ui.components.BookmarksAndTocBottomSheet
 import com.example.ui.components.DocumentLinksBottomSheet
@@ -103,11 +106,11 @@ import com.example.ui.components.ShareQuoteBottomSheet
 import com.example.ui.components.SignaturePadBottomSheet
 import com.example.ui.components.pdfColorFilterFor
 import com.example.ui.components.readerCanvasColorFor
+import com.example.ui.theme.EdgeHandleShape
 import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.ReaderLoadState
-import com.example.ui.viewmodel.ReaderUiState
 import com.example.ui.viewmodel.ReaderViewModel
-import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 
 @Composable
@@ -123,6 +126,8 @@ fun ReaderScreen(
     onPrintPdf: (uri: String, title: String) -> Unit
 ) {
     val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val motion = TeenaTheme.motion
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     val view = LocalView.current
@@ -136,26 +141,39 @@ fun ReaderScreen(
     var showShareQuoteSheet by remember { mutableStateOf(false) }
     var showLinksSheet by remember { mutableStateOf(false) }
     var showToolsSheet by remember { mutableStateOf(false) }
+    var isQuickMenuExpanded by remember(uriString) { mutableStateOf(false) }
 
     var shareQuoteInitialText by remember { mutableStateOf("") }
     var shareQuotePageNumber by remember { mutableIntStateOf(1) }
+
+    BackHandler(enabled = state.isSearchBarVisible || isQuickMenuExpanded) {
+        if (state.isSearchBarVisible) {
+            viewModel.closeSearchBar()
+        } else {
+            isQuickMenuExpanded = false
+        }
+    }
 
     LaunchedEffect(uriString, initialPage) {
         viewModel.openDocument(uriString, initialPage)
     }
 
+    var barsHiddenByReader by remember { mutableStateOf(false) }
     LaunchedEffect(state.isChromeVisible) {
         val window = activity?.window ?: return@LaunchedEffect
         val controller = WindowCompat.getInsetsController(window, view)
-        controller.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (state.isChromeVisible) {
-            controller.show(WindowInsetsCompat.Type.systemBars())
-        } else {
+        if (!state.isChromeVisible) {
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             controller.hide(WindowInsetsCompat.Type.systemBars())
+            barsHiddenByReader = true
+        } else if (barsHiddenByReader) {
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            barsHiddenByReader = false
         }
     }
 
+    var appliedBrightnessOverride by remember { mutableStateOf(false) }
     DisposableEffect(prefs.keepScreenOn, state.brightnessOverride) {
         val window = activity?.window
         if (window != null) {
@@ -164,163 +182,80 @@ fun ReaderScreen(
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
-            val attrs = window.attributes
-            attrs.screenBrightness =
-                state.brightnessOverride ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            window.attributes = attrs
+            val override = state.brightnessOverride
+            if (override != null) {
+                val attrs = window.attributes
+                attrs.screenBrightness = override
+                window.attributes = attrs
+                appliedBrightnessOverride = true
+            } else if (appliedBrightnessOverride) {
+                val attrs = window.attributes
+                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                window.attributes = attrs
+                appliedBrightnessOverride = false
+            }
         }
         onDispose {
             val w = activity?.window
             if (w != null) {
                 w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                val attrs = w.attributes
-                attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-                w.attributes = attrs
-                WindowCompat.getInsetsController(w, view)
-                    .show(WindowInsetsCompat.Type.systemBars())
+                if (appliedBrightnessOverride) {
+                    val attrs = w.attributes
+                    attrs.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                    w.attributes = attrs
+                    appliedBrightnessOverride = false
+                }
+                if (barsHiddenByReader) {
+                    WindowCompat.getInsetsController(w, view)
+                        .show(WindowInsetsCompat.Type.systemBars())
+                    barsHiddenByReader = false
+                }
             }
         }
     }
 
-    val isDark = isSystemInDarkTheme()
-    val canvasColor = readerCanvasColorFor(state.colorMode, isDark)
-    val colorFilter = remember(state.colorMode) { pdfColorFilterFor(state.colorMode) }
+    val isCurrentDoc = state.uriString == uriString
+    val effectiveLoadState = if (isCurrentDoc) state.loadState else ReaderLoadState.Loading
+    val effectiveColorMode = if (isCurrentDoc) state.colorMode else prefs.defaultPdfColorMode
+    val isDark = TeenaTheme.colors.isDark
+    val canvasColor = readerCanvasColorFor(effectiveColorMode, isDark)
+    val colorFilter = remember(effectiveColorMode) { pdfColorFilterFor(effectiveColorMode) }
 
-    Box(
+    var showLoadingSpinner by remember(uriString) { mutableStateOf(false) }
+    LaunchedEffect(effectiveLoadState, uriString) {
+        if (effectiveLoadState is ReaderLoadState.Loading) {
+            delay(220L)
+            showLoadingSpinner = true
+        } else {
+            showLoadingSpinner = false
+        }
+    }
+
+    val containerBg = if (effectiveLoadState is ReaderLoadState.Ready) {
+        canvasColor
+    } else {
+        MaterialTheme.colorScheme.background
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(canvasColor)
+            .background(containerBg)
     ) {
-        when (val load = state.loadState) {
-            ReaderLoadState.Loading -> {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                }
-            }
-
-            is ReaderLoadState.Error -> {
-                ReaderErrorState(
-                    message = load.message,
-                    onRetry = { viewModel.openDocument(uriString, initialPage) },
-                    onBack = onNavigateBack
-                )
-            }
-
-            ReaderLoadState.Ready -> {
-                PdfDocumentViewport(
-                    state = state,
-                    pageGapSpacing = prefs.pageGapSpacing,
-                    colorFilter = colorFilter,
-                    canvasColor = canvasColor,
-                    renderPage = viewModel::renderPageBitmap,
-                    onPageChanged = viewModel::onPageScrolled,
-                    onPendingScrollConsumed = viewModel::consumePendingScrollTarget,
-                    onZoomChange = viewModel::setZoomScale,
-                    onToggleChrome = viewModel::toggleChromeVisibility,
-                    onStepPage = viewModel::stepPage,
-                    onStopAutoScroll = viewModel::stopAutoScroll
-                )
-
-                if (prefs.showPageIndicatorPill && !state.isChromeVisible) {
-                    val progressPct = if (state.pageCount <= 0) {
-                        0
-                    } else {
-                        ((state.currentPage + 1).toFloat() / state.pageCount.toFloat() * 100f)
-                            .coerceIn(0f, 100f)
-                            .roundToInt()
-                    }
-                    Surface(
-                        onClick = { showGoToPageDialog = true },
-                        color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.84f),
-                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-                        shape = MaterialTheme.shapes.large,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .navigationBarsPadding()
-                            .padding(start = s.screenH, bottom = s.screenH)
-                            .testTag("floating_page_pill")
-                    ) {
-                        Text(
-                            text = "${state.currentPage + 1} / ${state.pageCount.coerceAtLeast(1)}  ·  $progressPct%",
-                            style = MaterialTheme.typography.labelSmall,
-                            modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
-                        )
-                    }
-                }
-
-                if (prefs.showEdgeShortcutButtons) {
-                    FloatingEdgeShortcuts(
-                        isZoomLocked = state.isZoomLocked,
-                        hideMargins = state.hideMargins,
-                        isAutoScrollActive = state.isAutoScrollActive,
-                        colorMode = state.colorMode,
-                        isBrightnessOpen = state.isBrightnessOverlayVisible,
-                        onToggleZoomLock = viewModel::toggleZoomLock,
-                        onToggleHideMargins = viewModel::toggleHideMargins,
-                        onToggleBrightness = viewModel::toggleBrightnessOverlay,
-                        onRotateScreen = onRotateScreen,
-                        onToggleAutoScroll = viewModel::toggleAutoScroll,
-                        onCycleColorMode = viewModel::cycleColorMode,
-                        modifier = Modifier
-                            .align(Alignment.CenterEnd)
-                            .padding(end = s.sm)
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = state.isAutoScrollActive,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .navigationBarsPadding()
-                        .padding(bottom = if (state.isChromeVisible) s.readerBarClearance else s.xl)
-                ) {
-                    AutoScrollControlPill(
-                        speed = state.autoScrollSpeed,
-                        onDecrease = { viewModel.adjustAutoScrollSpeed(-1) },
-                        onIncrease = { viewModel.adjustAutoScrollSpeed(1) },
-                        onStop = viewModel::stopAutoScroll
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = state.isBrightnessOverlayVisible,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .padding(horizontal = s.xl)
-                ) {
-                    BrightnessControlOverlay(
-                        brightness = state.brightnessOverride ?: 0.65f,
-                        onBrightnessChange = viewModel::setBrightnessOverride,
-                        onResetAuto = { viewModel.setBrightnessOverride(null) },
-                        onClose = viewModel::toggleBrightnessOverlay
-                    )
-                }
-            }
-        }
-
         AnimatedVisibility(
-            visible = state.isChromeVisible || state.loadState !is ReaderLoadState.Ready,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut(),
-            modifier = Modifier.align(Alignment.TopCenter)
+            visible = state.isChromeVisible || effectiveLoadState !is ReaderLoadState.Ready,
+            enter = expandVertically(motion.fastSpec()) + fadeIn(motion.fastSpec()),
+            exit = shrinkVertically(motion.fastSpec()) + fadeOut(motion.fastSpec())
         ) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 ReaderTopBar(
-                    state = state,
+                    title = state.documentTitle.ifBlank { stringResource(R.string.reader_default_title) },
                     onBack = onNavigateBack,
-                    onJumpBack = viewModel::jumpBackInHistory,
-                    onJumpForward = viewModel::jumpForwardInHistory,
-                    onToggleSearch = viewModel::toggleSearchBar,
-                    onToggleBookmark = viewModel::toggleCurrentPageBookmark,
-                    onOpenTextMode = onOpenTextMode,
-                    onOpenTools = { showToolsSheet = true }
+                    onEnterFullScreen = {
+                        isQuickMenuExpanded = false
+                        viewModel.setChromeVisible(false)
+                    },
+                    onOpenMenu = { showToolsSheet = true }
                 )
 
                 AnimatedVisibility(visible = state.isSearchBarVisible) {
@@ -329,6 +264,7 @@ fun ReaderScreen(
                         matchCount = state.searchMatches.size,
                         activeMatchIndex = state.activeSearchMatchIndex,
                         activeSnippet = state.searchMatches.getOrNull(state.activeSearchMatchIndex)?.snippet,
+                        isExtractingText = state.isExtractingText,
                         onQueryChange = viewModel::updateSearchQuery,
                         onPrevMatch = { viewModel.navigateSearchMatch(-1) },
                         onNextMatch = { viewModel.navigateSearchMatch(1) },
@@ -338,26 +274,167 @@ fun ReaderScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible = state.isChromeVisible && state.loadState is ReaderLoadState.Ready,
-            enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
-            modifier = Modifier.align(Alignment.BottomCenter)
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
         ) {
-            ReaderBottomBar(
-                state = state,
-                onScrubPage = { page -> viewModel.jumpToPage(page, recordHistory = false) },
-                onPagePillClick = { showGoToPageDialog = true },
-                onCycleLayout = {
-                    val modes = ScrollLayoutMode.entries
-                    val next = modes[(modes.indexOf(state.layoutMode) + 1) % modes.size]
-                    viewModel.setLayoutMode(next)
-                },
-                onCycleColorMode = viewModel::cycleColorMode,
-                onOpenTocAndBookmarks = { showBookmarksAndTocSheet = true },
-                onOpenAnnotations = { showAnnotationsSheet = true },
-                onOpenTools = { showToolsSheet = true }
-            )
+            when (val load = effectiveLoadState) {
+                ReaderLoadState.Loading -> {
+                    if (showLoadingSpinner) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+
+                is ReaderLoadState.Error -> {
+                    ReaderErrorState(
+                        message = load.message,
+                        onRetry = { viewModel.openDocument(uriString, initialPage) },
+                        onBack = onNavigateBack
+                    )
+                }
+
+                ReaderLoadState.Ready -> {
+                    PdfDocumentViewport(
+                        state = state,
+                        pageGapSpacing = prefs.pageGapSpacing,
+                        renderQuality = prefs.renderQuality,
+                        colorFilter = colorFilter,
+                        canvasColor = canvasColor,
+                        peekPage = viewModel::peekPageBitmap,
+                        renderPage = viewModel::renderPageBitmap,
+                        onPageChanged = viewModel::onPageScrolled,
+                        onPendingScrollConsumed = viewModel::consumePendingScrollTarget,
+                        onZoomChange = viewModel::setZoomScale,
+                        onToggleChrome = {
+                            if (isQuickMenuExpanded) {
+                                isQuickMenuExpanded = false
+                            } else {
+                                viewModel.toggleChromeVisibility()
+                            }
+                        },
+                        onStepPage = viewModel::stepPage,
+                        onStopAutoScroll = viewModel::stopAutoScroll
+                    )
+
+                    if (prefs.showPageIndicatorPill) {
+                        val progressPct = if (state.pageCount <= 0) {
+                            0
+                        } else {
+                            ((state.currentPage + 1).toFloat() / state.pageCount.toFloat() * 100f)
+                                .coerceIn(0f, 100f)
+                                .roundToInt()
+                        }
+                        Surface(
+                            onClick = { showGoToPageDialog = true },
+                            color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.82f),
+                            contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                            shape = MaterialTheme.shapes.large,
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .navigationBarsPadding()
+                                .padding(start = s.screenH, bottom = s.screenH)
+                                .testTag("floating_page_pill")
+                        ) {
+                            Text(
+                                text = "${state.currentPage + 1} / ${state.pageCount.coerceAtLeast(1)}  ·  $progressPct%",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
+                            )
+                        }
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = !state.isChromeVisible,
+                        enter = fadeIn(motion.fastSpec()),
+                        exit = fadeOut(motion.fastSpec()),
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .statusBarsPadding()
+                            .padding(top = s.sm, end = s.sm)
+                    ) {
+                        Surface(
+                            onClick = { viewModel.setChromeVisible(true) },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                            shadowElevation = sz.cardElevation,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .size(sz.fullscreenBadgeSize)
+                                .testTag("reader_exit_fullscreen_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Rounded.FullscreenExit,
+                                    contentDescription = stringResource(R.string.reader_exit_fullscreen),
+                                    modifier = Modifier.size(sz.iconTool)
+                                )
+                            }
+                        }
+                    }
+
+                    if (prefs.showEdgeShortcutButtons) {
+                        CollapsibleEdgeQuickMenu(
+                            expanded = isQuickMenuExpanded,
+                            isBookmarked = state.isCurrentPageBookmarked,
+                            isZoomLocked = state.isZoomLocked,
+                            hideMargins = state.hideMargins,
+                            isAutoScrollActive = state.isAutoScrollActive,
+                            colorMode = state.colorMode,
+                            isBrightnessOpen = state.isBrightnessOverlayVisible,
+                            onExpand = { isQuickMenuExpanded = true },
+                            onCollapse = { isQuickMenuExpanded = false },
+                            onToggleBookmark = viewModel::toggleCurrentPageBookmark,
+                            onToggleZoomLock = viewModel::toggleZoomLock,
+                            onToggleHideMargins = viewModel::toggleHideMargins,
+                            onToggleBrightness = viewModel::toggleBrightnessOverlay,
+                            onRotateScreen = onRotateScreen,
+                            onToggleAutoScroll = viewModel::toggleAutoScroll,
+                            onCycleColorMode = viewModel::cycleColorMode,
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                        )
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = state.isAutoScrollActive,
+                        enter = fadeIn(motion.fastSpec()),
+                        exit = fadeOut(motion.fastSpec()),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = s.xl)
+                    ) {
+                        AutoScrollControlPill(
+                            speed = state.autoScrollSpeed,
+                            onDecrease = { viewModel.adjustAutoScrollSpeed(-1) },
+                            onIncrease = { viewModel.adjustAutoScrollSpeed(1) },
+                            onStop = viewModel::stopAutoScroll
+                        )
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = state.isBrightnessOverlayVisible,
+                        enter = fadeIn(motion.fastSpec()),
+                        exit = fadeOut(motion.fastSpec()),
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(horizontal = s.xl)
+                    ) {
+                        BrightnessControlOverlay(
+                            brightness = state.brightnessOverride ?: 0.65f,
+                            onBrightnessChange = viewModel::setBrightnessOverride,
+                            onResetAuto = { viewModel.setBrightnessOverride(null) },
+                            onClose = viewModel::toggleBrightnessOverlay
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -456,6 +533,11 @@ fun ReaderScreen(
             onToggleKeepScreenOn = viewModel::setKeepScreenOn,
             onSelectStatus = viewModel::updateReadingStatus,
             onOpenSearch = viewModel::toggleSearchBar,
+            onToggleBookmark = viewModel::toggleCurrentPageBookmark,
+            onOpenGoToPage = { showGoToPageDialog = true },
+            onToggleAutoScroll = viewModel::toggleAutoScroll,
+            onJumpBack = viewModel::jumpBackInHistory,
+            onJumpForward = viewModel::jumpForwardInHistory,
             onOpenTocAndBookmarks = { showBookmarksAndTocSheet = true },
             onOpenAnnotations = { showAnnotationsSheet = true },
             onOpenSignaturePad = { showSignaturePadSheet = true },
@@ -476,141 +558,289 @@ fun ReaderScreen(
 
 @Composable
 private fun ReaderTopBar(
-    state: ReaderUiState,
+    title: String,
     onBack: () -> Unit,
-    onJumpBack: () -> Unit,
-    onJumpForward: () -> Unit,
-    onToggleSearch: () -> Unit,
-    onToggleBookmark: () -> Unit,
-    onOpenTextMode: () -> Unit,
-    onOpenTools: () -> Unit
+    onEnterFullScreen: () -> Unit,
+    onOpenMenu: () -> Unit
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
 
     Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-        tonalElevation = sz.fabElevation,
-        shadowElevation = sz.fabElevation,
+        color = cs.surface,
+        tonalElevation = sz.cardElevation,
+        shadowElevation = sz.cardElevation,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .padding(horizontal = s.xs, vertical = s.xs)
-        ) {
-            IconButton(
-                onClick = onBack,
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("reader_back_button")
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = s.xs, vertical = s.xs)
             ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = stringResource(R.string.action_back)
-                )
-            }
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("reader_back_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = stringResource(R.string.action_back)
+                    )
+                }
 
-            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = state.documentTitle.ifBlank { stringResource(R.string.app_name) },
-                    style = MaterialTheme.typography.titleSmall,
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
+                    color = cs.onSurface,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = s.xs)
+                        .testTag("reader_document_title")
                 )
-                if (state.pageCount > 0) {
-                    val marginBadge = if (state.hideMargins) " · Crop" else ""
-                    val incogBadge = if (state.incognitoMode) " · Incognito" else ""
-                    Text(
-                        text = "${state.layoutMode.shortLabel} · ${String.format(Locale.US, "%.1fx", state.zoomScale)}$marginBadge$incogBadge",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
 
-            if (state.canJumpBack) {
                 IconButton(
-                    onClick = onJumpBack,
-                    modifier = Modifier.minimumInteractiveComponentSize()
+                    onClick = onEnterFullScreen,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("reader_fullscreen_button")
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Undo,
-                        contentDescription = stringResource(R.string.reader_history_back)
-                    )
-                }
-            }
-
-            if (state.canJumpForward) {
-                IconButton(
-                    onClick = onJumpForward,
-                    modifier = Modifier.minimumInteractiveComponentSize()
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Redo,
-                        contentDescription = stringResource(R.string.reader_history_forward)
-                    )
-                }
-            }
-
-            IconButton(
-                onClick = onToggleSearch,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("reader_search_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = stringResource(R.string.reader_search_in_pdf),
-                    tint = if (state.isSearchBarVisible) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                )
-            }
-
-            IconButton(
-                onClick = onToggleBookmark,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("reader_bookmark_toggle")
-            ) {
-                Icon(
-                    imageVector = if (state.isCurrentPageBookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
-                    contentDescription = stringResource(R.string.reader_add_bookmark),
-                    tint = if (state.isCurrentPageBookmarked) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(sz.fullscreenBadgeSize)
+                            .background(cs.primaryContainer, CircleShape)
+                            .border(sz.hairline, cs.primary.copy(alpha = 0.28f), CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Fullscreen,
+                            contentDescription = stringResource(R.string.reader_fullscreen),
+                            tint = cs.onPrimaryContainer,
+                            modifier = Modifier.size(sz.iconTool)
+                        )
                     }
-                )
-            }
+                }
 
-            IconButton(
-                onClick = onOpenTextMode,
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("reader_text_mode_button")
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Subject,
-                    contentDescription = stringResource(R.string.reader_text_mode)
-                )
+                IconButton(
+                    onClick = onOpenMenu,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("reader_more_tools_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Menu,
+                        contentDescription = stringResource(R.string.reader_menu)
+                    )
+                }
             }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(sz.hairline)
+                    .background(TeenaTheme.colors.hairline)
+            )
+        }
+    }
+}
 
-            IconButton(
-                onClick = onOpenTools,
+@Composable
+private fun CollapsibleEdgeQuickMenu(
+    expanded: Boolean,
+    isBookmarked: Boolean,
+    isZoomLocked: Boolean,
+    hideMargins: Boolean,
+    isAutoScrollActive: Boolean,
+    colorMode: PdfColorMode,
+    isBrightnessOpen: Boolean,
+    onExpand: () -> Unit,
+    onCollapse: () -> Unit,
+    onToggleBookmark: () -> Unit,
+    onToggleZoomLock: () -> Unit,
+    onToggleHideMargins: () -> Unit,
+    onToggleBrightness: () -> Unit,
+    onRotateScreen: () -> Unit,
+    onToggleAutoScroll: () -> Unit,
+    onCycleColorMode: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val motion = TeenaTheme.motion
+    val cs = MaterialTheme.colorScheme
+
+    Box(
+        contentAlignment = Alignment.CenterEnd,
+        modifier = modifier
+    ) {
+        if (!expanded) {
+            Box(
+                contentAlignment = Alignment.CenterEnd,
                 modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("reader_more_tools_button")
+                    .width(sz.edgeSwipeStripWidth)
+                    .height(sz.signaturePadHeight)
+                    .pointerInput(Unit) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { _, dragAmount ->
+                                totalDrag += dragAmount
+                                if (totalDrag < -18f) {
+                                    onExpand()
+                                }
+                            }
+                        )
+                    }
             ) {
-                Icon(
-                    imageVector = Icons.Filled.MoreVert,
-                    contentDescription = stringResource(R.string.reader_tools)
-                )
+                Surface(
+                    onClick = onExpand,
+                    shape = EdgeHandleShape,
+                    color = cs.surface.copy(alpha = 0.72f),
+                    contentColor = cs.onSurfaceVariant,
+                    shadowElevation = sz.cardElevation,
+                    modifier = Modifier
+                        .width(sz.edgeHandleWidth)
+                        .height(sz.edgeHandleHeight)
+                        .alpha(0.86f)
+                        .border(sz.hairline, TeenaTheme.colors.hairline, EdgeHandleShape)
+                        .testTag("quick_menu_edge_handle")
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
+                            contentDescription = stringResource(R.string.reader_quick_menu_open),
+                            modifier = Modifier.size(sz.iconTool)
+                        )
+                    }
+                }
             }
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = slideInHorizontally(motion.navSlideSpec()) { it } + fadeIn(motion.fastSpec()),
+            exit = slideOutHorizontally(motion.navSlideSpec()) { it } + fadeOut(motion.fastSpec())
+        ) {
+            Surface(
+                shape = MaterialTheme.shapes.extraLarge,
+                color = cs.surface.copy(alpha = 0.94f),
+                tonalElevation = sz.heroElevation,
+                shadowElevation = sz.menuElevation,
+                modifier = Modifier
+                    .padding(end = s.sm)
+                    .border(sz.hairline, TeenaTheme.colors.hairline, MaterialTheme.shapes.extraLarge)
+                    .pointerInput(Unit) {
+                        var totalDrag = 0f
+                        detectHorizontalDragGestures(
+                            onDragStart = { totalDrag = 0f },
+                            onHorizontalDrag = { _, dragAmount ->
+                                totalDrag += dragAmount
+                                if (totalDrag > 24f) {
+                                    onCollapse()
+                                }
+                            }
+                        )
+                    }
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(s.xs),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = s.xs, vertical = s.sm)
+                ) {
+                    EdgeQuickActionButton(
+                        icon = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        description = stringResource(R.string.reader_quick_menu_close),
+                        active = false,
+                        onClick = onCollapse,
+                        tag = "quick_menu_collapse"
+                    )
+                    EdgeQuickActionButton(
+                        icon = if (isBookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                        description = stringResource(R.string.reader_add_bookmark),
+                        active = isBookmarked,
+                        onClick = onToggleBookmark,
+                        tag = "shortcut_bookmark"
+                    )
+                    EdgeQuickActionButton(
+                        icon = if (isZoomLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
+                        description = stringResource(R.string.reader_zoom_lock),
+                        active = isZoomLocked,
+                        onClick = onToggleZoomLock,
+                        tag = "shortcut_zoom_lock"
+                    )
+                    EdgeQuickActionButton(
+                        icon = Icons.Filled.CropFree,
+                        description = stringResource(R.string.reader_hide_margins),
+                        active = hideMargins,
+                        onClick = onToggleHideMargins,
+                        tag = "shortcut_hide_margins"
+                    )
+                    EdgeQuickActionButton(
+                        icon = Icons.Filled.Brightness6,
+                        description = stringResource(R.string.reader_brightness),
+                        active = isBrightnessOpen,
+                        onClick = onToggleBrightness,
+                        tag = "shortcut_brightness"
+                    )
+                    EdgeQuickActionButton(
+                        icon = Icons.Filled.ScreenRotation,
+                        description = stringResource(R.string.reader_rotate),
+                        active = false,
+                        onClick = onRotateScreen,
+                        tag = "shortcut_rotate"
+                    )
+                    EdgeQuickActionButton(
+                        icon = if (isAutoScrollActive) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        description = stringResource(R.string.reader_auto_scroll),
+                        active = isAutoScrollActive,
+                        onClick = onToggleAutoScroll,
+                        tag = "shortcut_autoscroll"
+                    )
+                    EdgeQuickActionButton(
+                        icon = if (colorMode == PdfColorMode.DARK_INVERT) Icons.Filled.DarkMode else Icons.Filled.Contrast,
+                        description = stringResource(R.string.reader_color_mode),
+                        active = colorMode != PdfColorMode.NORMAL,
+                        onClick = onCycleColorMode,
+                        tag = "shortcut_dark_mode"
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EdgeQuickActionButton(
+    icon: ImageVector,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    tag: String
+) {
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = if (active) cs.primaryContainer else cs.surfaceVariant.copy(alpha = 0.5f),
+        contentColor = if (active) cs.onPrimaryContainer else cs.onSurface,
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .size(sz.quickMenuTileSize)
+            .testTag(tag)
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = description,
+                modifier = Modifier.size(sz.iconTool)
+            )
         }
     }
 }
@@ -621,6 +851,7 @@ private fun InPdfSearchOverlayBar(
     matchCount: Int,
     activeMatchIndex: Int,
     activeSnippet: String?,
+    isExtractingText: Boolean,
     onQueryChange: (String) -> Unit,
     onPrevMatch: () -> Unit,
     onNextMatch: () -> Unit,
@@ -628,6 +859,7 @@ private fun InPdfSearchOverlayBar(
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
+    val focusManager = LocalFocusManager.current
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -640,6 +872,10 @@ private fun InPdfSearchOverlayBar(
                 .fillMaxWidth()
                 .padding(horizontal = s.md, vertical = s.sm)
         ) {
+            if (isExtractingText && query.isNotBlank()) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(s.xs))
+            }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
@@ -650,15 +886,50 @@ private fun InPdfSearchOverlayBar(
                     placeholder = { Text(stringResource(R.string.reader_search_hint)) },
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            if (matchCount > 0) onNextMatch()
+                            focusManager.clearFocus()
+                        }
+                    ),
+                    trailingIcon = if (query.isNotEmpty()) {
+                        {
+                            IconButton(
+                                onClick = { onQueryChange("") },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("in_pdf_search_clear")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = stringResource(R.string.clear)
+                                )
+                            }
+                        }
+                    } else null,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("in_pdf_search_input")
                 )
                 Spacer(modifier = Modifier.width(s.sm))
+                val statusLabel = when {
+                    matchCount > 0 -> stringResource(
+                        R.string.reader_match_counter,
+                        activeMatchIndex + 1,
+                        matchCount
+                    )
+                    query.isNotBlank() && !isExtractingText -> stringResource(R.string.reader_no_matches)
+                    else -> stringResource(R.string.reader_match_counter, 0, 0)
+                }
                 Text(
-                    text = if (matchCount > 0) "${activeMatchIndex + 1}/$matchCount" else "0/0",
+                    text = statusLabel,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    color = if (matchCount > 0) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
                 IconButton(
                     onClick = onPrevMatch,
@@ -698,245 +969,6 @@ private fun InPdfSearchOverlayBar(
                     modifier = Modifier.padding(horizontal = s.xs)
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun ReaderBottomBar(
-    state: ReaderUiState,
-    onScrubPage: (Int) -> Unit,
-    onPagePillClick: () -> Unit,
-    onCycleLayout: () -> Unit,
-    onCycleColorMode: () -> Unit,
-    onOpenTocAndBookmarks: () -> Unit,
-    onOpenAnnotations: () -> Unit,
-    onOpenTools: () -> Unit
-) {
-    val s = TeenaTheme.spacing
-    val sz = TeenaTheme.sizes
-    var sliderValue by remember(state.currentPage, state.pageCount) {
-        mutableFloatStateOf(state.currentPage.toFloat())
-    }
-    val maxIndex = (state.pageCount - 1).coerceAtLeast(1)
-
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-        tonalElevation = sz.fabElevation,
-        shadowElevation = sz.heroElevation,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = s.md, vertical = s.sm)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Surface(
-                    onClick = onPagePillClick,
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = MaterialTheme.shapes.small,
-                    modifier = Modifier.testTag("bottom_page_pill")
-                ) {
-                    Text(
-                        text = "${sliderValue.roundToInt() + 1} / ${state.pageCount.coerceAtLeast(1)}",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
-                    )
-                }
-
-                Spacer(modifier = Modifier.width(s.md))
-
-                Slider(
-                    value = sliderValue.coerceIn(0f, maxIndex.toFloat()),
-                    onValueChange = { sliderValue = it },
-                    onValueChangeFinished = { onScrubPage(sliderValue.roundToInt()) },
-                    valueRange = 0f..maxIndex.toFloat(),
-                    enabled = state.pageCount > 1,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("reader_page_slider")
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val layoutIcon = when (state.layoutMode) {
-                    ScrollLayoutMode.VERTICAL -> Icons.Filled.ViewAgenda
-                    ScrollLayoutMode.HORIZONTAL -> Icons.Filled.ViewCarousel
-                    ScrollLayoutMode.SINGLE_PAGE -> Icons.Filled.ViewDay
-                    ScrollLayoutMode.DUAL_PAGE -> Icons.Filled.MenuBook
-                }
-
-                BottomActionItem(
-                    icon = layoutIcon,
-                    label = state.layoutMode.shortLabel,
-                    active = false,
-                    onClick = onCycleLayout,
-                    tag = "reader_layout_button"
-                )
-                BottomActionItem(
-                    icon = if (state.colorMode == PdfColorMode.DARK_INVERT) Icons.Filled.DarkMode else Icons.Filled.Contrast,
-                    label = state.colorMode.label.substringBefore(" "),
-                    active = state.colorMode != PdfColorMode.NORMAL,
-                    onClick = onCycleColorMode,
-                    tag = "reader_color_mode_button"
-                )
-                BottomActionItem(
-                    icon = Icons.AutoMirrored.Filled.Toc,
-                    label = stringResource(R.string.tab_bookmarks_label),
-                    active = state.bookmarks.isNotEmpty(),
-                    onClick = onOpenTocAndBookmarks,
-                    tag = "reader_bookmarks_sheet_button"
-                )
-                BottomActionItem(
-                    icon = Icons.Filled.Highlight,
-                    label = stringResource(R.string.tab_highlights_label),
-                    active = state.annotations.isNotEmpty(),
-                    onClick = onOpenAnnotations,
-                    tag = "reader_annotations_button"
-                )
-                BottomActionItem(
-                    icon = Icons.Filled.Tune,
-                    label = stringResource(R.string.reader_tools),
-                    active = false,
-                    onClick = onOpenTools,
-                    tag = "reader_tools_button"
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun BottomActionItem(
-    icon: ImageVector,
-    label: String,
-    active: Boolean,
-    onClick: () -> Unit,
-    tag: String
-) {
-    val s = TeenaTheme.spacing
-    val sz = TeenaTheme.sizes
-    val tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .clickable(onClick = onClick)
-            .padding(horizontal = s.sm, vertical = s.xs)
-            .testTag(tag)
-    ) {
-        Icon(imageVector = icon, contentDescription = label, tint = tint, modifier = Modifier.size(sz.iconTool))
-        Spacer(modifier = Modifier.height(s.xxs))
-        Text(text = label, style = MaterialTheme.typography.labelSmall, color = tint, maxLines = 1)
-    }
-}
-
-@Composable
-private fun FloatingEdgeShortcuts(
-    isZoomLocked: Boolean,
-    hideMargins: Boolean,
-    isAutoScrollActive: Boolean,
-    colorMode: PdfColorMode,
-    isBrightnessOpen: Boolean,
-    onToggleZoomLock: () -> Unit,
-    onToggleHideMargins: () -> Unit,
-    onToggleBrightness: () -> Unit,
-    onRotateScreen: () -> Unit,
-    onToggleAutoScroll: () -> Unit,
-    onCycleColorMode: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(TeenaTheme.spacing.sm),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-    ) {
-        EdgeShortcutChip(
-            icon = if (isZoomLocked) Icons.Filled.Lock else Icons.Filled.LockOpen,
-            description = stringResource(R.string.reader_zoom_lock),
-            active = isZoomLocked,
-            onClick = onToggleZoomLock,
-            tag = "shortcut_zoom_lock"
-        )
-        EdgeShortcutChip(
-            icon = Icons.Filled.CropFree,
-            description = stringResource(R.string.reader_hide_margins),
-            active = hideMargins,
-            onClick = onToggleHideMargins,
-            tag = "shortcut_hide_margins"
-        )
-        EdgeShortcutChip(
-            icon = Icons.Filled.Brightness6,
-            description = stringResource(R.string.reader_brightness),
-            active = isBrightnessOpen,
-            onClick = onToggleBrightness,
-            tag = "shortcut_brightness"
-        )
-        EdgeShortcutChip(
-            icon = Icons.Filled.ScreenRotation,
-            description = stringResource(R.string.reader_rotate),
-            active = false,
-            onClick = onRotateScreen,
-            tag = "shortcut_rotate"
-        )
-        EdgeShortcutChip(
-            icon = if (isAutoScrollActive) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-            description = stringResource(R.string.reader_auto_scroll),
-            active = isAutoScrollActive,
-            onClick = onToggleAutoScroll,
-            tag = "shortcut_autoscroll"
-        )
-        EdgeShortcutChip(
-            icon = Icons.Filled.DarkMode,
-            description = stringResource(R.string.reader_color_mode),
-            active = colorMode != PdfColorMode.NORMAL,
-            onClick = onCycleColorMode,
-            tag = "shortcut_dark_mode"
-        )
-    }
-}
-
-@Composable
-private fun EdgeShortcutChip(
-    icon: ImageVector,
-    description: String,
-    active: Boolean,
-    onClick: () -> Unit,
-    tag: String
-) {
-    val sz = TeenaTheme.sizes
-    Surface(
-        onClick = onClick,
-        shape = CircleShape,
-        color = if (active) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
-        },
-        contentColor = if (active) {
-            MaterialTheme.colorScheme.onPrimary
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        },
-        shadowElevation = sz.cardElevation,
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .size(sz.shortcutPillSize)
-            .testTag(tag)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(imageVector = icon, contentDescription = description, modifier = Modifier.size(sz.iconTool))
         }
     }
 }

@@ -45,6 +45,10 @@
     <string name="empty_annotations_subtitle">Add highlights, notes, or vector signatures inside any PDF to review them here.</string>
 
     <!-- Plurals -->
+    <plurals name="folder_count">
+        <item quantity="one">%d folder</item>
+        <item quantity="other">%d folders</item>
+    </plurals>
     <plurals name="pdf_count">
         <item quantity="one">%d PDF</item>
         <item quantity="other">%d PDFs</item>
@@ -163,6 +167,12 @@
     <string name="reader_no_jump_history">No jump history yet.</string>
     <string name="reader_current_page_label">Current Page %1$d</string>
     <string name="reader_document_info">Document Info</string>
+    <string name="reader_fullscreen">Full screen</string>
+    <string name="reader_exit_fullscreen">Exit full screen</string>
+    <string name="reader_quick_menu_open">Open quick tools</string>
+    <string name="reader_quick_menu_close">Hide quick tools</string>
+    <string name="reader_menu">Menu</string>
+    <string name="reader_default_title">PDF Document</string>
 
     <!-- Text Mode -->
     <string name="text_mode_title">Text Mode</string>
@@ -214,4 +224,24 @@
     <string name="settings_cache_cleared">Render cache cleared</string>
     <string name="settings_history_cleared">Library history cleared</string>
     <string name="settings_clear_history_confirm">This removes saved history, bookmarks, and annotations from TeenaReader. Your actual PDF files on storage remain untouched.</string>
+
+    <!-- Device Permissions, Battery & Fast Scanner -->
+    <string name="settings_section_permissions">Device Access &amp; Scanner</string>
+    <string name="perm_all_files_title">All Files Access</string>
+    <string name="perm_all_files_granted">Full storage access enabled (Android up to 16)</string>
+    <string name="perm_all_files_missing">Allow full file access to auto-discover all device PDFs</string>
+    <string name="perm_battery_title">Unrestricted Battery</string>
+    <string name="perm_battery_granted">Battery optimization disabled for uninterrupted scans &amp; reading</string>
+    <string name="perm_battery_missing">Disable battery optimization so background indexing never stalls</string>
+    <string name="perm_grant_action">Allow</string>
+    <string name="perm_disable_battery_action">Optimize Off</string>
+    <string name="perm_banner_files_desc">Grant All Files Access to instantly scan and load all PDFs across your device.</string>
+    <string name="perm_banner_battery_desc">Disable battery optimization for ultra-fast scanning and uninterrupted reading.</string>
+    <string name="scanner_scanning_title">Scanning storage for PDFs…</string>
+    <string name="scanner_found_count">%1$d PDFs found</string>
+    <string name="scanner_rescan_title">Scan Device for PDFs</string>
+    <string name="scanner_rescan_desc">Run ultra-fast parallel search across internal storage &amp; MediaStore</string>
+    <string name="scanner_rescan_menu">Scan device PDFs</string>
+    <string name="scanner_rescan_done">Scan complete: %1$d new PDFs added (%2$d total found)</string>
+    <string name="file_meta_ready">%1$s · Ready</string>
 </resources>

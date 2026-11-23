@@ -60,6 +60,7 @@ fun PdfGridCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .background(cs.background, MaterialTheme.shapes.large)
             .clip(MaterialTheme.shapes.large)
             .combinedClickable(
                 onClick = onClick,
@@ -68,6 +69,7 @@ fun PdfGridCard(
                     onMore(item)
                 }
             )
+            .padding(bottom = s.xs)
             .testTag("pdf_grid_${item.id}"),
         verticalArrangement = Arrangement.spacedBy(s.sm)
     ) {
@@ -85,7 +87,7 @@ fun PdfGridCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(s.sm)
+                        .padding(s.badgePad)
                         .size(sz.coverMenuVisual)
                         .background(c.coverScrim, CircleShape),
                     contentAlignment = Alignment.Center
@@ -93,13 +95,13 @@ fun PdfGridCard(
                     Icon(
                         imageVector = Icons.Rounded.PushPin,
                         contentDescription = null,
-                        modifier = Modifier.size(sz.iconSm),
+                        modifier = Modifier.size(sz.iconXs),
                         tint = c.onCoverScrim
                     )
                 }
             }
 
-            // 3-dots: 48dp accessible touch target with 28dp visible scrim circle
+            // 3-dots: 48dp accessible touch target with crisp scrim circle
             Box(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
@@ -135,27 +137,35 @@ fun PdfGridCard(
                     progress = item.progress,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(s.sm)
+                        .padding(s.badgePad)
                 )
             }
         }
 
-        Text(
-            text = item.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = cs.onSurface,
-            maxLines = 2,
-            minLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = s.xs)
-        )
-        Text(
-            text = timeText,
-            style = MaterialTheme.typography.bodySmall,
-            color = cs.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = s.xs)
-        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = s.xs),
+            verticalArrangement = Arrangement.spacedBy(s.xxs)
+        ) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleSmall,
+                color = cs.onSurface,
+                maxLines = 2,
+                minLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = timeText,
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
     }
 }

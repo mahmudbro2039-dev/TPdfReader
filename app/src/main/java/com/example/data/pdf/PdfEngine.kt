@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
+import java.util.concurrent.atomic.AtomicInteger
 
 data class PdfPageDimension(
     val width: Int,
@@ -34,12 +35,13 @@ data class OpenedPdfMetadata(
 class PdfEngine(private val context: Context) {
 
     private val renderMutex = Mutex()
+    private val activeVisibleRenders = AtomicInteger(0)
     private var currentUriString: String? = null
     private var currentPfd: ParcelFileDescriptor? = null
     private var currentRenderer: PdfRenderer? = null
 
-    private val maxCacheKb: Int = ((Runtime.getRuntime().maxMemory() / 1024L) / 8L)
-        .coerceIn(12_288L, 40_960L).toInt()
+    private val maxCacheKb: Int = ((Runtime.getRuntime().maxMemory() / 1024L) / 5L)
+        .coerceIn(24_576L, 81_920L).toInt()
 
     private val pageBitmapCache = object : LruCache<String, Bitmap>(maxCacheKb) {
         override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
@@ -48,12 +50,15 @@ class PdfEngine(private val context: Context) {
     private val thumbnailCacheDir: File
         get() = File(context.cacheDir, "pdf_thumbnails").apply { if (!exists()) mkdirs() }
 
-    suspend fun openDocument(uriString: String): Result<OpenedPdfMetadata> = withContext(Dispatchers.IO) {
+    suspend fun openDocument(
+        uriString: String,
+        priorityPageIndex: Int = 0
+    ): Result<OpenedPdfMetadata> = withContext(Dispatchers.IO) {
         renderMutex.withLock {
             runCatching {
                 if (currentUriString == uriString && currentRenderer != null) {
                     val renderer = currentRenderer!!
-                    return@runCatching readAllPageDimensions(renderer)
+                    return@runCatching readAllPageDimensions(renderer, priorityPageIndex)
                 }
 
                 closeInternal()
@@ -68,31 +73,127 @@ class PdfEngine(private val context: Context) {
                     throw e
                 }
 
+                if (renderer.pageCount <= 0) {
+                    runCatching { renderer.close() }
+                    runCatching { pfd.close() }
+                    throw IllegalStateException("The PDF document contains no readable pages")
+                }
+
                 currentUriString = uriString
                 currentPfd = pfd
                 currentRenderer = renderer
 
-                readAllPageDimensions(renderer)
+                readAllPageDimensions(renderer, priorityPageIndex)
             }
         }
     }
 
-    private fun readAllPageDimensions(renderer: PdfRenderer): OpenedPdfMetadata {
-        val count = renderer.pageCount
-        val dims = ArrayList<PdfPageDimension>(count)
-        val sampleLimit = minOf(count, 120)
-        var fallbackDim = PdfPageDimension(595, 842)
-        for (index in 0 until sampleLimit) {
-            renderer.openPage(index).use { page ->
-                val dim = PdfPageDimension(page.width.coerceAtLeast(1), page.height.coerceAtLeast(1))
-                if (index == 0) fallbackDim = dim
-                dims.add(dim)
+    /**
+     * Scans remaining page dimensions lazily after opening so mixed portrait/landscape
+     * documents update aspect ratios without slowing initial document open.
+     */
+    suspend fun inspectAllPageDimensions(uriString: String): List<PdfPageDimension>? =
+        withContext(Dispatchers.IO) {
+            if (activeVisibleRenders.get() > 0) return@withContext null
+            renderMutex.withLock {
+                if (currentUriString != uriString) return@withContext null
+                val renderer = currentRenderer ?: return@withContext null
+                val count = renderer.pageCount
+                if (count <= 1) return@withContext null
+                val result = ArrayList<PdfPageDimension>(count)
+                for (i in 0 until count) {
+                    if (activeVisibleRenders.get() > 0 || currentUriString != uriString) {
+                        return@withContext null
+                    }
+                    val dim = runCatching {
+                        renderer.openPage(i).use { page ->
+                            PdfPageDimension(page.width.coerceAtLeast(1), page.height.coerceAtLeast(1))
+                        }
+                    }.getOrNull() ?: result.lastOrNull() ?: PdfPageDimension(595, 842)
+                    result.add(dim)
+                }
+                result
             }
         }
-        for (index in sampleLimit until count) {
-            dims.add(fallbackDim)
+
+    private fun readAllPageDimensions(
+        renderer: PdfRenderer,
+        priorityPageIndex: Int = 0
+    ): OpenedPdfMetadata {
+        val count = renderer.pageCount
+        if (count <= 0) {
+            return OpenedPdfMetadata(pageCount = 0, pageDimensions = emptyList())
+        }
+        val firstDim = renderer.openPage(0).use { page ->
+            PdfPageDimension(page.width.coerceAtLeast(1), page.height.coerceAtLeast(1))
+        }
+        val targetIdx = priorityPageIndex.coerceIn(0, count - 1)
+        val priorityDim = if (targetIdx > 0) {
+            renderer.openPage(targetIdx).use { page ->
+                PdfPageDimension(page.width.coerceAtLeast(1), page.height.coerceAtLeast(1))
+            }
+        } else {
+            firstDim
+        }
+        val dims = MutableList(count) { firstDim }
+        if (targetIdx > 0) {
+            dims[targetIdx] = priorityDim
         }
         return OpenedPdfMetadata(pageCount = count, pageDimensions = dims)
+    }
+
+    private fun buildCacheKey(
+        uriString: String,
+        pageIndex: Int,
+        targetWidthPx: Int,
+        qualityScale: Float,
+        hideMargins: Boolean
+    ): Pair<Int, String> {
+        val quantizedWidth = ((targetWidthPx * qualityScale).toInt().coerceIn(360, 1440) + 15) / 16 * 16
+        val clampedWidth = quantizedWidth.coerceIn(360, 1440)
+        val marginKey = if (hideMargins) '1' else '0'
+        return clampedWidth to "$uriString|$pageIndex|$clampedWidth|$marginKey"
+    }
+
+    fun peekCachedPage(
+        uriString: String,
+        pageIndex: Int,
+        targetWidthPx: Int,
+        qualityScale: Float,
+        hideMargins: Boolean = false
+    ): Bitmap? {
+        if (targetWidthPx <= 0) return null
+        val (_, cacheKey) = buildCacheKey(uriString, pageIndex, targetWidthPx, qualityScale, hideMargins)
+        return synchronized(pageBitmapCache) {
+            pageBitmapCache.get(cacheKey)?.takeIf { !it.isRecycled }
+        }
+    }
+
+    suspend fun prefetchPage(
+        uriString: String,
+        pageIndex: Int,
+        targetWidthPx: Int,
+        qualityScale: Float,
+        hideMargins: Boolean = false
+    ) = withContext(Dispatchers.IO) {
+        if (targetWidthPx <= 0) return@withContext
+        val (clampedWidth, cacheKey) = buildCacheKey(uriString, pageIndex, targetWidthPx, qualityScale, hideMargins)
+        synchronized(pageBitmapCache) {
+            pageBitmapCache.get(cacheKey)?.let { cached ->
+                if (!cached.isRecycled) return@withContext
+            }
+        }
+        // Yield briefly while a visible foreground page is rendering instead of dropping prefetch
+        var attempts = 0
+        while (activeVisibleRenders.get() > 0 && attempts < 10) {
+            kotlinx.coroutines.delay(25L)
+            attempts++
+        }
+        if (activeVisibleRenders.get() > 0) return@withContext
+        renderMutex.withLock {
+            if (activeVisibleRenders.get() > 0) return@withContext
+            renderLocked(uriString, pageIndex, clampedWidth, cacheKey, hideMargins)
+        }
     }
 
     suspend fun renderPage(
@@ -102,9 +203,7 @@ class PdfEngine(private val context: Context) {
         qualityScale: Float,
         hideMargins: Boolean = false
     ): Bitmap? = withContext(Dispatchers.IO) {
-        val clampedWidth = (targetWidthPx * qualityScale).toInt().coerceIn(360, 2200)
-        val marginKey = if (hideMargins) "crop1" else "crop0"
-        val cacheKey = "${uriString.hashCode()}_${pageIndex}_${clampedWidth}_$marginKey"
+        val (clampedWidth, cacheKey) = buildCacheKey(uriString, pageIndex, targetWidthPx, qualityScale, hideMargins)
 
         synchronized(pageBitmapCache) {
             pageBitmapCache.get(cacheKey)?.let { cached ->
@@ -112,58 +211,73 @@ class PdfEngine(private val context: Context) {
             }
         }
 
-        renderMutex.withLock {
-            synchronized(pageBitmapCache) {
-                pageBitmapCache.get(cacheKey)?.let { cached ->
-                    if (!cached.isRecycled) return@withContext cached
-                }
+        activeVisibleRenders.incrementAndGet()
+        try {
+            renderMutex.withLock {
+                renderLocked(uriString, pageIndex, clampedWidth, cacheKey, hideMargins)
             }
-
-            if (currentUriString != uriString || currentRenderer == null) {
-                val pfd = openParcelFileDescriptor(uriString) ?: return@withContext null
-                closeInternal()
-                val renderer = runCatching { PdfRenderer(pfd) }.getOrElse {
-                    runCatching { pfd.close() }
-                    return@withContext null
-                }
-                currentUriString = uriString
-                currentPfd = pfd
-                currentRenderer = renderer
-            }
-
-            val renderer = currentRenderer ?: return@withContext null
-            if (pageIndex < 0 || pageIndex >= renderer.pageCount) return@withContext null
-
-            runCatching {
-                renderer.openPage(pageIndex).use { page ->
-                    val ratio = if (page.width > 0) page.height.toFloat() / page.width.toFloat() else 1.414f
-                    val bitmapWidth = clampedWidth
-                    val bitmapHeight = (bitmapWidth * ratio).toInt().coerceIn(360, 3200)
-
-                    val rawBitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888)
-                    val canvas = Canvas(rawBitmap)
-                    canvas.drawColor(Color.WHITE)
-
-                    page.render(
-                        rawBitmap,
-                        null,
-                        null,
-                        PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
-                    )
-
-                    val finalBitmap = if (hideMargins) {
-                        cropOuterWhitespaceMargins(rawBitmap)
-                    } else {
-                        rawBitmap
-                    }
-
-                    synchronized(pageBitmapCache) {
-                        pageBitmapCache.put(cacheKey, finalBitmap)
-                    }
-                    finalBitmap
-                }
-            }.getOrNull()
+        } finally {
+            activeVisibleRenders.decrementAndGet()
         }
+    }
+
+    private fun renderLocked(
+        uriString: String,
+        pageIndex: Int,
+        clampedWidth: Int,
+        cacheKey: String,
+        hideMargins: Boolean
+    ): Bitmap? {
+        synchronized(pageBitmapCache) {
+            pageBitmapCache.get(cacheKey)?.let { cached ->
+                if (!cached.isRecycled) return cached
+            }
+        }
+
+        if (currentUriString != uriString || currentRenderer == null) {
+            val pfd = openParcelFileDescriptor(uriString) ?: return null
+            closeInternal()
+            val renderer = runCatching { PdfRenderer(pfd) }.getOrElse {
+                runCatching { pfd.close() }
+                return null
+            }
+            currentUriString = uriString
+            currentPfd = pfd
+            currentRenderer = renderer
+        }
+
+        val renderer = currentRenderer ?: return null
+        if (pageIndex < 0 || pageIndex >= renderer.pageCount) return null
+
+        return runCatching {
+            renderer.openPage(pageIndex).use { page ->
+                val ratio = if (page.width > 0) page.height.toFloat() / page.width.toFloat() else 1.414f
+                val bitmapWidth = clampedWidth
+                val bitmapHeight = (bitmapWidth * ratio).toInt().coerceIn(360, 2240)
+
+                val rawBitmap = Bitmap.createBitmap(bitmapWidth, bitmapHeight, Bitmap.Config.ARGB_8888).apply {
+                    eraseColor(Color.WHITE)
+                }
+
+                page.render(
+                    rawBitmap,
+                    null,
+                    null,
+                    PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY
+                )
+
+                val finalBitmap = if (hideMargins) {
+                    cropOuterWhitespaceMargins(rawBitmap)
+                } else {
+                    rawBitmap
+                }
+
+                synchronized(pageBitmapCache) {
+                    pageBitmapCache.put(cacheKey, finalBitmap)
+                }
+                finalBitmap
+            }
+        }.getOrNull()
     }
 
     /**
@@ -177,23 +291,21 @@ class PdfEngine(private val context: Context) {
 
         val stepX = (w / 64).coerceAtLeast(2)
         val stepY = (h / 80).coerceAtLeast(2)
+        val rowPixels = IntArray(w)
 
-        fun isNonWhite(pixel: Int): Boolean {
-            val r = Color.red(pixel)
-            val g = Color.green(pixel)
-            val b = Color.blue(pixel)
-            return r < 244 || g < 244 || b < 244
-        }
-
-        // Ignore top 16px in case of decorative header strip and bottom 16px
         var minX = w
         var maxX = 0
         var minY = h
         var maxY = 0
 
         for (y in stepY until (h - stepY) step stepY) {
+            source.getPixels(rowPixels, 0, w, 0, y, w, 1)
             for (x in stepX until (w - stepX) step stepX) {
-                if (isNonWhite(source.getPixel(x, y))) {
+                val pixel = rowPixels[x]
+                val r = (pixel ushr 16) and 0xFF
+                val g = (pixel ushr 8) and 0xFF
+                val b = pixel and 0xFF
+                if (r < 244 || g < 244 || b < 244) {
                     if (x < minX) minX = x
                     if (x > maxX) maxX = x
                     if (y < minY) minY = y
@@ -272,6 +384,9 @@ class PdfEngine(private val context: Context) {
             pageBitmapCache.evictAll()
         }
         thumbnailCacheDir.listFiles()?.forEach { file ->
+            runCatching { file.delete() }
+        }
+        File(context.cacheDir, "pdf_covers").listFiles()?.forEach { file ->
             runCatching { file.delete() }
         }
     }

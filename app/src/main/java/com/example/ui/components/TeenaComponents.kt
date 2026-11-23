@@ -1,8 +1,8 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
-import android.text.format.DateUtils
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -23,13 +23,18 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -37,7 +42,9 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LibraryBooks
+import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bookmarks
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
@@ -48,31 +55,30 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -81,6 +87,8 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -93,14 +101,14 @@ import com.example.ui.theme.A4_RATIO
 import com.example.ui.theme.ReadingStatus
 import com.example.ui.theme.TeenaTheme
 
-@Stable
-class FabController {
-    var expanded by mutableStateOf(true)
-}
-
 @Composable
-fun ReadingProgressBar(progress: Float, modifier: Modifier = Modifier) {
+fun ReadingProgressBar(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
     val c = TeenaTheme.colors
+    val barHeight = if (compact) TeenaTheme.sizes.compactProgressHeight else TeenaTheme.sizes.progressHeight
     val animatedProgress by animateFloatAsState(
         targetValue = progress.coerceIn(0f, 1f),
         animationSpec = TeenaTheme.motion.slowSpec(),
@@ -109,7 +117,7 @@ fun ReadingProgressBar(progress: Float, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(TeenaTheme.sizes.progressHeight)
+            .height(barHeight)
             .clip(CircleShape)
             .background(c.progressTrack)
     ) {
@@ -124,7 +132,11 @@ fun ReadingProgressBar(progress: Float, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun StatusChip(status: ReadingStatus, modifier: Modifier = Modifier) {
+fun StatusChip(
+    status: ReadingStatus,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
+) {
     val sc = TeenaTheme.colors.status(status)
     val s = TeenaTheme.spacing
     val label = stringResource(
@@ -137,12 +149,16 @@ fun StatusChip(status: ReadingStatus, modifier: Modifier = Modifier) {
     )
     Text(
         text = label,
-        style = MaterialTheme.typography.labelMedium,
+        style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
         color = sc.fg,
         maxLines = 1,
+        softWrap = false,
         modifier = modifier
             .background(sc.bg, CircleShape)
-            .padding(horizontal = s.sm, vertical = s.xs)
+            .padding(
+                horizontal = if (compact) s.sm else s.sm,
+                vertical = if (compact) s.xxs else s.xs
+            )
     )
 }
 
@@ -193,18 +209,19 @@ fun PdfThumbnail(
 @Composable
 fun PdfCover(
     uri: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shape: Shape = MaterialTheme.shapes.large
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
     BoxWithConstraints(
         modifier = modifier
-            .clip(MaterialTheme.shapes.large)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(
                 width = TeenaTheme.sizes.hairline,
                 color = TeenaTheme.colors.hairline,
-                shape = MaterialTheme.shapes.large
+                shape = shape
             ),
         contentAlignment = Alignment.Center
     ) {
@@ -243,7 +260,8 @@ fun PdfRowCard(
     item: PdfItem,
     onClick: () -> Unit,
     onMore: (PdfItem) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
@@ -255,64 +273,85 @@ fun PdfRowCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("pdf_row_${item.id}"),
-        shape = MaterialTheme.shapes.large,
+        shape = if (compact) MaterialTheme.shapes.medium else MaterialTheme.shapes.large,
         color = cs.surface,
         border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline)
     ) {
         Row(
-            modifier = Modifier.padding(s.md),
-            horizontalArrangement = Arrangement.spacedBy(s.md),
+            modifier = Modifier.padding(
+                horizontal = s.md,
+                vertical = if (compact) s.sm else s.md
+            ),
+            horizontalArrangement = Arrangement.spacedBy(if (compact) s.md else s.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            PdfThumbnail(uri = item.uri, width = sz.thumbWidth)
+            PdfThumbnail(
+                uri = item.uri,
+                width = if (compact) sz.compactThumbWidth else sz.thumbWidth
+            )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(s.sm)
+                verticalArrangement = Arrangement.spacedBy(if (compact) s.xs else s.sm)
             ) {
-                Row(verticalAlignment = Alignment.Top) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     if (item.isPinned) {
                         Icon(
                             imageVector = Icons.Rounded.PushPin,
                             contentDescription = null,
-                            modifier = Modifier.size(sz.iconSm),
+                            modifier = Modifier.size(sz.iconXs),
                             tint = cs.primary
                         )
                         Spacer(Modifier.width(s.xs))
                     }
                     Text(
                         text = item.title,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = if (compact) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
                         color = cs.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                        maxLines = if (compact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                 }
                 Row(
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(s.sm),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    StatusChip(item.status)
+                    StatusChip(item.status, compact = compact)
+                    val metaText = if (item.totalPages > 0) {
+                        stringResource(R.string.page_of, item.currentPage, item.totalPages)
+                    } else {
+                        stringResource(R.string.file_meta_ready, formatFileSize(item.sizeBytes))
+                    }
                     Text(
-                        text = stringResource(R.string.page_of, item.currentPage, item.totalPages),
+                        text = metaText,
                         style = MaterialTheme.typography.bodySmall,
                         color = cs.onSurfaceVariant,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
                     )
                 }
-                ReadingProgressBar(item.progress)
+                ReadingProgressBar(item.progress, compact = compact)
             }
             IconButton(
                 onClick = {
                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                     onMore(item)
                 },
-                modifier = Modifier.testTag("pdf_more_${item.id}")
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("pdf_more_${item.id}")
             ) {
                 Icon(
                     imageVector = Icons.Rounded.MoreVert,
                     contentDescription = stringResource(R.string.more_options),
-                    tint = cs.onSurfaceVariant
+                    tint = cs.onSurfaceVariant,
+                    modifier = Modifier.size(if (compact) sz.iconTool else sz.iconMd)
                 )
             }
         }
@@ -334,40 +373,44 @@ fun HeroContinueCard(
         modifier = modifier
             .fillMaxWidth()
             .testTag("hero_continue_card"),
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = MaterialTheme.shapes.large,
         color = cs.surface,
         border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline),
-        shadowElevation = sz.heroElevation
+        shadowElevation = sz.cardElevation
     ) {
         Row(
-            modifier = Modifier.padding(s.lg),
-            horizontalArrangement = Arrangement.spacedBy(s.lg),
-            verticalAlignment = Alignment.Top
+            modifier = Modifier.padding(s.md),
+            horizontalArrangement = Arrangement.spacedBy(s.md),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             PdfThumbnail(uri = item.uri, width = sz.heroThumbWidth)
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(s.sm)
+                verticalArrangement = Arrangement.spacedBy(s.xs)
             ) {
-                Text(
-                    text = stringResource(R.string.continue_reading),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = cs.primary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(s.xs)
+                ) {
+                    Text(
+                        text = stringResource(R.string.continue_reading),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = cs.primary,
+                        maxLines = 1
+                    )
+                    Text(
+                        text = stringResource(R.string.in_folder, item.folderName),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = cs.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
                 Text(
                     text = item.title,
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     color = cs.onSurface,
                     maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = stringResource(R.string.in_folder, item.folderName),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = cs.onSurfaceVariant,
-                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Row(
@@ -380,31 +423,30 @@ fun HeroContinueCard(
                     )
                     Text(
                         text = stringResource(R.string.percent_format, item.percent),
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant,
                         maxLines = 1
                     )
                 }
-                Button(
-                    onClick = onClick,
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = cs.primary,
-                        contentColor = cs.onPrimary
-                    ),
-                    contentPadding = PaddingValues(horizontal = s.lg, vertical = s.sm),
-                    modifier = Modifier.testTag("hero_resume_button")
+            }
+            IconButton(
+                onClick = onClick,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("hero_resume_button")
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(sz.heroPlayButton)
+                        .clip(CircleShape)
+                        .background(cs.primary),
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlayArrow,
-                        contentDescription = null,
-                        modifier = Modifier.size(sz.iconSm)
-                    )
-                    Spacer(Modifier.width(s.xs))
-                    Text(
-                        text = stringResource(R.string.resume),
-                        style = MaterialTheme.typography.labelLarge,
-                        maxLines = 1
+                        contentDescription = stringResource(R.string.resume),
+                        tint = cs.onPrimary,
+                        modifier = Modifier.size(sz.iconTool)
                     )
                 }
             }
@@ -543,7 +585,8 @@ fun FilterChipsRow(
                     Text(
                         text = stringResource(R.string.filter_chip_with_count, baseLabel, count),
                         style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1
+                        maxLines = 1,
+                        softWrap = false
                     )
                 },
                 shape = CircleShape,
@@ -568,7 +611,7 @@ fun FilterChipsRow(
 }
 
 @Composable
-fun FolderRow(
+fun FolderCard(
     folder: FolderItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -576,15 +619,10 @@ fun FolderRow(
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
     val cs = MaterialTheme.colorScheme
+    val c = TeenaTheme.colors
     val countLabel = pluralStringResource(R.plurals.pdf_count, folder.pdfCount, folder.pdfCount)
     val sizeLabel = formatFileSize(folder.totalSizeBytes)
-    val relativeUpdated = remember(folder.lastUpdatedAt) {
-        DateUtils.getRelativeTimeSpanString(
-            folder.lastUpdatedAt,
-            System.currentTimeMillis(),
-            DateUtils.MINUTE_IN_MILLIS
-        ).toString()
-    }
+    val previews = folder.previewUris
 
     Surface(
         onClick = onClick,
@@ -593,23 +631,169 @@ fun FolderRow(
             .testTag("folder_row_${folder.name}"),
         shape = MaterialTheme.shapes.large,
         color = cs.surface,
-        border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline)
+        border = BorderStroke(sz.hairline, c.hairline),
+        shadowElevation = sz.cardElevation
     ) {
-        Row(
-            modifier = Modifier.padding(s.md),
-            horizontalArrangement = Arrangement.spacedBy(s.md),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
-                    .size(sz.folderIconBox)
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(cs.primaryContainer),
+                    .fillMaxWidth()
+                    .aspectRatio(sz.folderPreviewRatio)
+                    .clipToBounds()
+                    .background(cs.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
+                when (previews.size) {
+                    0 -> Icon(
+                        imageVector = Icons.Outlined.Folder,
+                        contentDescription = null,
+                        tint = cs.onSurfaceVariant,
+                        modifier = Modifier.size(sz.iconLg)
+                    )
+                    1 -> PdfCover(
+                        uri = previews[0],
+                        shape = MaterialTheme.shapes.small,
+                        modifier = Modifier
+                            .width(sz.folderMiniCoverWidth)
+                            .aspectRatio(sz.coverRatio)
+                            .shadow(sz.cardElevation, MaterialTheme.shapes.small)
+                    )
+                    2 -> {
+                        PdfCover(
+                            uri = previews[1],
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
+                                .graphicsLayer { rotationZ = 6f }
+                                .alpha(0.92f)
+                                .width(sz.folderMiniCoverWidth)
+                                .aspectRatio(sz.coverRatio)
+                                .shadow(sz.cardElevation, MaterialTheme.shapes.small)
+                        )
+                        PdfCover(
+                            uri = previews[0],
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .offset(x = -sz.folderMiniCoverOffsetX / 2)
+                                .graphicsLayer { rotationZ = -3f }
+                                .width(sz.folderMiniCoverWidth)
+                                .aspectRatio(sz.coverRatio)
+                                .shadow(sz.fabElevation, MaterialTheme.shapes.small)
+                        )
+                    }
+                    else -> {
+                        PdfCover(
+                            uri = previews[1],
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .offset(x = -sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
+                                .graphicsLayer { rotationZ = -8f }
+                                .alpha(0.9f)
+                                .width(sz.folderMiniCoverWidth)
+                                .aspectRatio(sz.coverRatio)
+                                .shadow(sz.cardElevation, MaterialTheme.shapes.small)
+                        )
+                        PdfCover(
+                            uri = previews[2],
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
+                                .graphicsLayer { rotationZ = 8f }
+                                .alpha(0.9f)
+                                .width(sz.folderMiniCoverWidth)
+                                .aspectRatio(sz.coverRatio)
+                                .shadow(sz.cardElevation, MaterialTheme.shapes.small)
+                        )
+                        PdfCover(
+                            uri = previews[0],
+                            shape = MaterialTheme.shapes.small,
+                            modifier = Modifier
+                                .width(sz.folderMiniCoverWidth)
+                                .aspectRatio(sz.coverRatio)
+                                .shadow(sz.fabElevation, MaterialTheme.shapes.small)
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider(thickness = sz.hairline, color = c.hairline)
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = s.md, vertical = s.md),
+                verticalArrangement = Arrangement.spacedBy(s.xs)
+            ) {
+                Text(
+                    text = folder.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = cs.onSurface,
+                    minLines = 2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(s.xs)
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Folder,
+                        contentDescription = null,
+                        tint = cs.primary,
+                        modifier = Modifier.size(sz.iconXs)
+                    )
+                    Text(
+                        text = stringResource(R.string.folder_meta_format, countLabel, sizeLabel),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = cs.onSurfaceVariant,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun FolderBreadcrumb(
+    currentFolder: String?,
+    pdfCount: Int,
+    totalSizeBytes: Long,
+    onRootClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (currentFolder == null) return
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+    val countLabel = pluralStringResource(R.plurals.pdf_count, pdfCount, pdfCount)
+    val sizeLabel = formatFileSize(totalSizeBytes)
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("folder_breadcrumb")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = s.xs, end = s.screenH, top = s.xs, bottom = s.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(s.xs)
+        ) {
+            IconButton(
+                onClick = onRootClick,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("breadcrumb_root")
+            ) {
                 Icon(
-                    imageVector = Icons.Rounded.Folder,
-                    contentDescription = null,
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = stringResource(R.string.action_back),
                     tint = cs.primary,
                     modifier = Modifier.size(sz.iconMd)
                 )
@@ -619,7 +803,7 @@ fun FolderRow(
                 verticalArrangement = Arrangement.spacedBy(s.xxs)
             ) {
                 Text(
-                    text = folder.name,
+                    text = currentFolder,
                     style = MaterialTheme.typography.titleMedium,
                     color = cs.onSurface,
                     maxLines = 1,
@@ -630,62 +814,12 @@ fun FolderRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = cs.onSurfaceVariant,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = stringResource(R.string.folder_updated_format, relativeUpdated),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = cs.onSurfaceVariant,
-                    maxLines = 1,
+                    softWrap = false,
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = cs.onSurfaceVariant
-            )
         }
-    }
-}
-
-@Composable
-fun FolderBreadcrumb(
-    currentFolder: String?,
-    onRootClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    if (currentFolder == null) return
-    val s = TeenaTheme.spacing
-    val sz = TeenaTheme.sizes
-    val cs = MaterialTheme.colorScheme
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .padding(horizontal = s.screenH, vertical = s.xs)
-            .testTag("folder_breadcrumb"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(s.xs)
-    ) {
-        IconButton(
-            onClick = onRootClick,
-            modifier = Modifier.testTag("breadcrumb_root")
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                contentDescription = stringResource(R.string.action_back),
-                tint = cs.primary,
-                modifier = Modifier.size(sz.iconMd)
-            )
-        }
-        Text(
-            text = currentFolder,
-            style = MaterialTheme.typography.titleMedium,
-            color = cs.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+        HorizontalDivider(thickness = sz.hairline, color = TeenaTheme.colors.hairline)
     }
 }
 
@@ -801,7 +935,7 @@ fun ShimmerLoadingList(modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .height(sz.shimmerHeroHeight)
                 .alpha(alpha)
-                .clip(MaterialTheme.shapes.extraLarge)
+                .clip(MaterialTheme.shapes.large)
                 .background(cs.surfaceVariant)
         )
         repeat(3) {
@@ -853,45 +987,27 @@ fun ShimmerLoadingGrid(modifier: Modifier = Modifier) {
                         .clip(MaterialTheme.shapes.large)
                         .background(cs.surfaceVariant)
                 )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(sz.shimmerTitleHeight)
-                        .alpha(alpha)
-                        .clip(MaterialTheme.shapes.extraSmall)
-                        .background(cs.surfaceVariant)
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.6f)
-                        .height(sz.shimmerMetaHeight)
-                        .alpha(alpha)
-                        .clip(MaterialTheme.shapes.extraSmall)
-                        .background(cs.surfaceVariant)
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(s.xs)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(sz.shimmerTitleHeight)
+                            .alpha(alpha)
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .background(cs.surfaceVariant)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.6f)
+                            .height(sz.shimmerMetaHeight)
+                            .alpha(alpha)
+                            .clip(MaterialTheme.shapes.extraSmall)
+                            .background(cs.surfaceVariant)
+                    )
+                }
             }
         }
     }
-}
-
-@Composable
-fun OpenPdfFab(
-    expanded: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val sz = TeenaTheme.sizes
-    ExtendedFloatingActionButton(
-        onClick = onClick,
-        expanded = expanded,
-        icon = { Icon(Icons.Rounded.FolderOpen, null) },
-        text = { Text(stringResource(R.string.open_pdf), style = MaterialTheme.typography.labelLarge) },
-        containerColor = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
-        shape = MaterialTheme.shapes.large,
-        elevation = FloatingActionButtonDefaults.elevation(defaultElevation = sz.fabElevation),
-        modifier = modifier.testTag("open_pdf_fab")
-    )
 }
 
 @Composable
@@ -900,52 +1016,266 @@ fun TeenaBottomBar(
     onSelectTab: (TeenaTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val cs = MaterialTheme.colorScheme
+    val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+    val c = TeenaTheme.colors
+    val motion = TeenaTheme.motion
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = s.screenH, vertical = s.sm),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = cs.surface,
+            border = BorderStroke(sz.hairline, c.hairline.copy(alpha = 0.85f)),
+            shadowElevation = sz.heroElevation,
+            modifier = Modifier
+                .widthIn(max = sz.bottomBarMaxWidth)
+                .fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(sz.bottomBarHeight)
+                    .selectableGroup()
+                    .padding(horizontal = s.xs, vertical = s.xs),
+                horizontalArrangement = Arrangement.spacedBy(s.xs),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TeenaTab.entries.forEach { tab ->
+                    val selected = currentTab == tab
+                    val label = stringResource(
+                        when (tab) {
+                            TeenaTab.Recent -> R.string.tab_recent
+                            TeenaTab.Library -> R.string.tab_library
+                            TeenaTab.Folders -> R.string.tab_folders
+                        }
+                    )
+                    val icon = when (tab) {
+                        TeenaTab.Recent -> if (selected) Icons.Rounded.History else Icons.Outlined.History
+                        TeenaTab.Library -> if (selected) Icons.Rounded.LibraryBooks else Icons.Outlined.LibraryBooks
+                        TeenaTab.Folders -> if (selected) Icons.Rounded.Folder else Icons.Outlined.Folder
+                    }
+                    val pillColor by animateColorAsState(
+                        targetValue = if (selected) cs.primaryContainer else Color.Transparent,
+                        animationSpec = motion.fastSpec(),
+                        label = "nav_pill_${tab.name}"
+                    )
+                    val contentColor by animateColorAsState(
+                        targetValue = if (selected) cs.primary else cs.onSurfaceVariant,
+                        animationSpec = motion.fastSpec(),
+                        label = "nav_tint_${tab.name}"
+                    )
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (selected) 1.08f else 1f,
+                        animationSpec = motion.fastSpec(),
+                        label = "nav_scale_${tab.name}"
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .clip(CircleShape)
+                            .background(pillColor)
+                            .selectable(
+                                selected = selected,
+                                onClick = { onSelectTab(tab) },
+                                role = Role.Tab
+                            )
+                            .testTag("bottom_tab_${tab.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(s.xxs)
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = label,
+                                tint = contentColor,
+                                modifier = Modifier
+                                    .size(sz.bottomNavIcon)
+                                    .graphicsLayer {
+                                        scaleX = iconScale
+                                        scaleY = iconScale
+                                    }
+                            )
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                color = contentColor,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DeviceScanProgressStrip(
+    foundCount: Int,
+    modifier: Modifier = Modifier
+) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+
+    Surface(
+        color = cs.primaryContainer,
+        shape = MaterialTheme.shapes.medium,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = s.screenH, vertical = s.xs)
+            .testTag("device_scan_progress_strip")
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = s.md, vertical = s.sm),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(s.sm)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.FolderOpen,
+                    contentDescription = null,
+                    tint = cs.primary,
+                    modifier = Modifier.size(sz.iconSm)
+                )
+                Text(
+                    text = stringResource(R.string.scanner_scanning_title),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = cs.onPrimaryContainer,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (foundCount > 0) {
+                    Text(
+                        text = stringResource(R.string.scanner_found_count, foundCount),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = cs.primary,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
+            LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(sz.progressHeight),
+                color = cs.primary,
+                trackColor = cs.primaryContainer
+            )
+        }
+    }
+}
+
+@Composable
+fun DeviceAccessStatusBanner(
+    hasAllFilesAccess: Boolean,
+    isBatteryOptimizationIgnored: Boolean,
+    onRequestAllFilesAccess: () -> Unit,
+    onRequestBatteryExemption: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val needsFiles = !hasAllFilesAccess
+    val needsBattery = !isBatteryOptimizationIgnored
+    if (!needsFiles && !needsBattery) return
+
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
     val c = TeenaTheme.colors
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        HorizontalDivider(thickness = sz.hairline, color = c.hairline)
-        NavigationBar(
-            containerColor = cs.surface,
-            tonalElevation = sz.zeroElevation
+    val description = if (needsFiles) {
+        stringResource(R.string.perm_banner_files_desc)
+    } else {
+        stringResource(R.string.perm_banner_battery_desc)
+    }
+    val actionLabel = if (needsFiles) {
+        stringResource(R.string.perm_grant_action)
+    } else {
+        stringResource(R.string.perm_disable_battery_action)
+    }
+    val bannerIcon = if (needsFiles) Icons.Rounded.FolderOpen else Icons.Rounded.BatteryChargingFull
+    val onAction = if (needsFiles) onRequestAllFilesAccess else onRequestBatteryExemption
+
+    Surface(
+        color = cs.surface,
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(sz.hairline, c.hairline),
+        shadowElevation = sz.cardElevation,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = s.screenH, vertical = s.xs)
+            .testTag("device_access_banner")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = s.md, top = s.sm, bottom = s.sm, end = s.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(s.sm)
         ) {
-            TeenaTab.entries.forEach { tab ->
-                val selected = currentTab == tab
-                val label = stringResource(
-                    when (tab) {
-                        TeenaTab.Recent -> R.string.tab_recent
-                        TeenaTab.Library -> R.string.tab_library
-                        TeenaTab.Folders -> R.string.tab_folders
-                    }
+            Icon(
+                imageVector = bannerIcon,
+                contentDescription = null,
+                tint = cs.primary,
+                modifier = Modifier.size(sz.iconMd)
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurface,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Button(
+                onClick = onAction,
+                shape = CircleShape,
+                contentPadding = PaddingValues(horizontal = s.md, vertical = s.xs),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = cs.primary,
+                    contentColor = cs.onPrimary
+                ),
+                modifier = Modifier.testTag("banner_grant_permission_button")
+            ) {
+                Text(
+                    text = actionLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    softWrap = false
                 )
-                val icon = when (tab) {
-                    TeenaTab.Recent -> if (selected) Icons.Rounded.History else Icons.Outlined.History
-                    TeenaTab.Library -> if (selected) Icons.Rounded.LibraryBooks else Icons.Outlined.LibraryBooks
-                    TeenaTab.Folders -> if (selected) Icons.Rounded.Folder else Icons.Outlined.Folder
-                }
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onSelectTab(tab) },
-                    icon = { Icon(icon, contentDescription = label) },
-                    label = {
-                        Text(
-                            text = label,
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1
-                        )
-                    },
-                    alwaysShowLabel = true,
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = cs.primary,
-                        selectedTextColor = cs.primary,
-                        indicatorColor = cs.primaryContainer,
-                        unselectedIconColor = cs.onSurfaceVariant,
-                        unselectedTextColor = cs.onSurfaceVariant
-                    ),
-                    modifier = Modifier.testTag("bottom_tab_${tab.name.lowercase()}")
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .testTag("banner_dismiss_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = stringResource(R.string.action_close),
+                    tint = cs.onSurfaceVariant,
+                    modifier = Modifier.size(sz.iconSm)
                 )
             }
         }
     }
 }
+
