@@ -1,0 +1,6 @@
+{
+  "name": "MJ PDF",
+  "description": "Fast, minimalist, privacy-focused offline PDF reader with full-screen mode, dark mode page inversion, zoom lock, auto-scroll, bookmarks, library management, and e-reader Text Mode.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
