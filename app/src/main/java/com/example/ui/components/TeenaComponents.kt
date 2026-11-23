@@ -1,7 +1,6 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -13,7 +12,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -39,16 +37,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.LibraryBooks
+import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
 import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.LibraryBooks
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -74,7 +69,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
@@ -109,11 +108,7 @@ fun ReadingProgressBar(
 ) {
     val c = TeenaTheme.colors
     val barHeight = if (compact) TeenaTheme.sizes.compactProgressHeight else TeenaTheme.sizes.progressHeight
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress.coerceIn(0f, 1f),
-        animationSpec = TeenaTheme.motion.slowSpec(),
-        label = "progress"
-    )
+    val clampedProgress = progress.coerceIn(0f, 1f)
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -121,13 +116,15 @@ fun ReadingProgressBar(
             .clip(CircleShape)
             .background(c.progressTrack)
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(animatedProgress)
-                .fillMaxHeight()
-                .clip(CircleShape)
-                .background(c.progressFill)
-        )
+        if (clampedProgress > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(clampedProgress)
+                    .fillMaxHeight()
+                    .clip(CircleShape)
+                    .background(c.progressFill)
+            )
+        }
     }
 }
 
@@ -170,9 +167,12 @@ fun PdfThumbnail(
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    val widthPx = remember(width, density) { with(density) { width.roundToPx() * 2 } }
-    val bmp by produceState<Bitmap?>(ThumbnailCache.peek(uri), uri, widthPx) {
-        value = ThumbnailCache.load(context, uri, widthPx)
+    val widthPx = remember(width, density) { with(density) { (width.roundToPx() * 2).coerceIn(160, 320) } }
+    val cached = remember(uri) { ThumbnailCache.peek(uri) }
+    val bmp by produceState<Bitmap?>(cached, uri, widthPx) {
+        if (value == null) {
+            value = ThumbnailCache.load(context, uri, widthPx)
+        }
     }
     Box(
         modifier = modifier
@@ -183,25 +183,20 @@ fun PdfThumbnail(
             .border(TeenaTheme.sizes.hairline, TeenaTheme.colors.hairline, MaterialTheme.shapes.small),
         contentAlignment = Alignment.Center
     ) {
-        Crossfade(
-            targetState = bmp,
-            animationSpec = TeenaTheme.motion.normalSpec(),
-            label = "thumb"
-        ) { bitmap ->
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Rounded.PictureAsPdf,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        val bitmap = bmp
+        if (bitmap != null && !bitmap.isRecycled) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.PictureAsPdf,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -210,11 +205,21 @@ fun PdfThumbnail(
 fun PdfCover(
     uri: String,
     modifier: Modifier = Modifier,
-    shape: Shape = MaterialTheme.shapes.large
+    shape: Shape = MaterialTheme.shapes.large,
+    targetWidth: Dp = TeenaTheme.sizes.gridMinCell
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
-    BoxWithConstraints(
+    val widthPx = remember(targetWidth, density) {
+        with(density) { (targetWidth.roundToPx() * 2).coerceIn(160, 360) }
+    }
+    val cached = remember(uri) { ThumbnailCache.peek(uri) }
+    val bmp by produceState<Bitmap?>(cached, uri, widthPx) {
+        if (value == null) {
+            value = ThumbnailCache.load(context, uri, widthPx)
+        }
+    }
+    Box(
         modifier = modifier
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
@@ -225,32 +230,21 @@ fun PdfCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        val widthPx = remember(maxWidth, density) {
-            with(density) { (maxWidth.roundToPx() * 2).coerceAtLeast(120) }
-        }
-        val bmp by produceState<Bitmap?>(ThumbnailCache.peek(uri), uri, widthPx) {
-            value = ThumbnailCache.load(context, uri, widthPx)
-        }
-        Crossfade(
-            targetState = bmp,
-            animationSpec = TeenaTheme.motion.normalSpec(),
-            label = "cover"
-        ) { bitmap ->
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Rounded.PictureAsPdf,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        val bitmap = bmp
+        if (bitmap != null && !bitmap.isRecycled) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                alignment = Alignment.TopCenter
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.PictureAsPdf,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -558,7 +552,6 @@ fun FilterChipsRow(
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            .fadingEndEdge(sz.fadeEdgeWidth)
             .testTag("library_filter_chips"),
         contentPadding = PaddingValues(horizontal = s.screenH),
         horizontalArrangement = Arrangement.spacedBy(s.sm)
@@ -645,7 +638,7 @@ fun FolderCard(
             ) {
                 when (previews.size) {
                     0 -> Icon(
-                        imageVector = Icons.Outlined.Folder,
+                        imageVector = Icons.Rounded.Folder,
                         contentDescription = null,
                         tint = cs.onSurfaceVariant,
                         modifier = Modifier.size(sz.iconLg)
@@ -653,6 +646,7 @@ fun FolderCard(
                     1 -> PdfCover(
                         uri = previews[0],
                         shape = MaterialTheme.shapes.small,
+                        targetWidth = sz.folderMiniCoverWidth,
                         modifier = Modifier
                             .width(sz.folderMiniCoverWidth)
                             .aspectRatio(sz.coverRatio)
@@ -662,6 +656,7 @@ fun FolderCard(
                         PdfCover(
                             uri = previews[1],
                             shape = MaterialTheme.shapes.small,
+                            targetWidth = sz.folderMiniCoverWidth,
                             modifier = Modifier
                                 .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = 6f }
@@ -673,6 +668,7 @@ fun FolderCard(
                         PdfCover(
                             uri = previews[0],
                             shape = MaterialTheme.shapes.small,
+                            targetWidth = sz.folderMiniCoverWidth,
                             modifier = Modifier
                                 .offset(x = -sz.folderMiniCoverOffsetX / 2)
                                 .graphicsLayer { rotationZ = -3f }
@@ -685,6 +681,7 @@ fun FolderCard(
                         PdfCover(
                             uri = previews[1],
                             shape = MaterialTheme.shapes.small,
+                            targetWidth = sz.folderMiniCoverWidth,
                             modifier = Modifier
                                 .offset(x = -sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = -8f }
@@ -696,6 +693,7 @@ fun FolderCard(
                         PdfCover(
                             uri = previews[2],
                             shape = MaterialTheme.shapes.small,
+                            targetWidth = sz.folderMiniCoverWidth,
                             modifier = Modifier
                                 .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = 8f }
@@ -707,6 +705,7 @@ fun FolderCard(
                         PdfCover(
                             uri = previews[0],
                             shape = MaterialTheme.shapes.small,
+                            targetWidth = sz.folderMiniCoverWidth,
                             modifier = Modifier
                                 .width(sz.folderMiniCoverWidth)
                                 .aspectRatio(sz.coverRatio)
@@ -738,7 +737,7 @@ fun FolderCard(
                     horizontalArrangement = Arrangement.spacedBy(s.xs)
                 ) {
                     Icon(
-                        imageVector = Icons.Outlined.Folder,
+                        imageVector = Icons.Rounded.FolderOpen,
                         contentDescription = null,
                         tint = cs.primary,
                         modifier = Modifier.size(sz.iconXs)
@@ -1038,16 +1037,33 @@ fun TeenaBottomBar(
                 .widthIn(max = sz.bottomBarMaxWidth)
                 .fillMaxWidth()
         ) {
+            val tabs = TeenaTab.entries
+            val pillIndex by animateFloatAsState(
+                targetValue = currentTab.ordinal.toFloat(),
+                animationSpec = motion.tabPillSpringSpec(),
+                label = "nav_pill_slide"
+            )
+            val pillBgColor = cs.primaryContainer
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(sz.bottomBarHeight)
                     .selectableGroup()
-                    .padding(horizontal = s.xs, vertical = s.xs),
-                horizontalArrangement = Arrangement.spacedBy(s.xs),
+                    .padding(s.xs)
+                    .drawBehind {
+                        val slotWidth = size.width / tabs.size.coerceAtLeast(1)
+                        val radius = size.height / 2f
+                        drawRoundRect(
+                            color = pillBgColor,
+                            topLeft = Offset(x = pillIndex * slotWidth, y = 0f),
+                            size = Size(width = slotWidth, height = size.height),
+                            cornerRadius = CornerRadius(radius, radius)
+                        )
+                    },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                TeenaTab.entries.forEach { tab ->
+                tabs.forEach { tab ->
                     val selected = currentTab == tab
                     val label = stringResource(
                         when (tab) {
@@ -1057,23 +1073,18 @@ fun TeenaBottomBar(
                         }
                     )
                     val icon = when (tab) {
-                        TeenaTab.Recent -> if (selected) Icons.Rounded.History else Icons.Outlined.History
-                        TeenaTab.Library -> if (selected) Icons.Rounded.LibraryBooks else Icons.Outlined.LibraryBooks
-                        TeenaTab.Folders -> if (selected) Icons.Rounded.Folder else Icons.Outlined.Folder
+                        TeenaTab.Recent -> Icons.Rounded.History
+                        TeenaTab.Library -> Icons.AutoMirrored.Rounded.LibraryBooks
+                        TeenaTab.Folders -> Icons.Rounded.Folder
                     }
-                    val pillColor by animateColorAsState(
-                        targetValue = if (selected) cs.primaryContainer else Color.Transparent,
-                        animationSpec = motion.fastSpec(),
-                        label = "nav_pill_${tab.name}"
-                    )
                     val contentColor by animateColorAsState(
                         targetValue = if (selected) cs.primary else cs.onSurfaceVariant,
-                        animationSpec = motion.fastSpec(),
+                        animationSpec = motion.tabEnterSpec(),
                         label = "nav_tint_${tab.name}"
                     )
                     val iconScale by animateFloatAsState(
-                        targetValue = if (selected) 1.08f else 1f,
-                        animationSpec = motion.fastSpec(),
+                        targetValue = if (selected) 1.06f else 1f,
+                        animationSpec = motion.tabPillSpringSpec(),
                         label = "nav_scale_${tab.name}"
                     )
 
@@ -1082,7 +1093,6 @@ fun TeenaBottomBar(
                             .weight(1f)
                             .fillMaxHeight()
                             .clip(CircleShape)
-                            .background(pillColor)
                             .selectable(
                                 selected = selected,
                                 onClick = { onSelectTab(tab) },
@@ -1109,7 +1119,7 @@ fun TeenaBottomBar(
                             Text(
                                 text = label,
                                 style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                                fontWeight = FontWeight.SemiBold,
                                 color = contentColor,
                                 maxLines = 1,
                                 softWrap = false,

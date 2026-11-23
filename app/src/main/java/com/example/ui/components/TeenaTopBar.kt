@@ -52,19 +52,24 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import com.example.R
@@ -191,8 +196,8 @@ fun TeenaTopBar(
         ) {
             AnimatedVisibility(
                 visible = !focused && query.isEmpty(),
-                enter = fadeIn(motion.normalSpec()) + expandHorizontally(motion.normalSpec()),
-                exit = fadeOut(motion.fastSpec()) + shrinkHorizontally(motion.fastSpec())
+                enter = fadeIn(motion.snapSpec()) + expandHorizontally(motion.snapSpec()),
+                exit = fadeOut(motion.snapSpec()) + shrinkHorizontally(motion.snapSpec())
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     BrandWordmark()
@@ -243,28 +248,53 @@ fun TeenaSearchField(
     val c = TeenaTheme.colors
     val cs = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
+    val focusRequester = remember { FocusRequester() }
     val interaction = remember { MutableInteractionSource() }
+    val pillTapInteraction = remember { MutableInteractionSource() }
     val isFocused by interaction.collectIsFocusedAsState()
     LaunchedEffect(isFocused) { onFocusChange(isFocused) }
 
+    var textFieldValue by remember {
+        mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
+    }
+    val currentOnQueryChange by rememberUpdatedState(onQueryChange)
+
+    LaunchedEffect(query) {
+        if (query != textFieldValue.text) {
+            textFieldValue = TextFieldValue(
+                text = query,
+                selection = TextRange(query.length)
+            )
+        }
+    }
+
+    val activeText = textFieldValue.text
+    val isActive = isFocused || activeText.isNotEmpty()
     val borderColor = if (isFocused) cs.primary.copy(alpha = 0.55f) else c.hairline.copy(alpha = 0.7f)
-    val searchPillBg = if (isFocused || query.isNotEmpty()) cs.primaryContainer else cs.surfaceVariant
-    val searchIconTint = if (isFocused || query.isNotEmpty()) cs.primary else cs.onSurfaceVariant
+    val searchPillBg = if (isActive) cs.primaryContainer else cs.surfaceVariant
+    val searchIconTint = if (isActive) cs.primary else cs.onSurfaceVariant
 
     BasicTextField(
-        value = query,
-        onValueChange = onQueryChange,
+        value = textFieldValue,
+        onValueChange = { updated ->
+            val previousText = textFieldValue.text
+            textFieldValue = updated
+            if (updated.text != previousText) {
+                currentOnQueryChange(updated.text)
+            }
+        },
         singleLine = true,
-        textStyle = MaterialTheme.typography.bodySmall.copy(color = cs.onSurface),
+        textStyle = MaterialTheme.typography.bodyMedium.copy(color = cs.onSurface),
         cursorBrush = SolidColor(cs.primary),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         keyboardActions = KeyboardActions(onSearch = {
-            onSearch(query)
+            onSearch(textFieldValue.text)
             focusManager.clearFocus()
         }),
         interactionSource = interaction,
         modifier = modifier
             .heightIn(min = sz.searchHeight)
+            .focusRequester(focusRequester)
             .testTag("top_search_field"),
         decorationBox = { inner ->
             Row(
@@ -274,34 +304,48 @@ fun TeenaSearchField(
                     .clip(CircleShape)
                     .background(c.searchBg)
                     .border(sz.hairline, borderColor, CircleShape)
+                    .clickable(
+                        interactionSource = pillTapInteraction,
+                        indication = null
+                    ) {
+                        focusRequester.requestFocus()
+                    }
                     .padding(start = s.md, end = s.xs),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(vertical = s.xxs),
+                        .padding(vertical = s.xs),
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    if (query.isEmpty()) {
+                    if (activeText.isEmpty()) {
                         Text(
                             text = stringResource(R.string.search_hint),
                             maxLines = 1,
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = cs.onSurfaceVariant.copy(alpha = 0.8f)
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = cs.onSurfaceVariant.copy(alpha = 0.75f)
                         )
                     }
-                    inner()
+                    Box(modifier = Modifier.fillMaxWidth()) {
+                        inner()
+                    }
                 }
                 Spacer(Modifier.width(s.xs))
-                if (query.isNotEmpty()) {
-                    IconButton(
-                        onClick = { onQueryChange("") },
+                if (activeText.isNotEmpty()) {
+                    Box(
                         modifier = Modifier
                             .size(sz.searchButton)
-                            .testTag("search_clear_button")
+                            .clip(CircleShape)
+                            .clickable {
+                                textFieldValue = TextFieldValue("")
+                                currentOnQueryChange("")
+                                focusRequester.requestFocus()
+                            }
+                            .testTag("search_clear_button"),
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Close,
@@ -318,7 +362,7 @@ fun TeenaSearchField(
                         .clip(CircleShape)
                         .background(searchPillBg)
                         .clickable {
-                            onSearch(query)
+                            onSearch(textFieldValue.text)
                             focusManager.clearFocus()
                         }
                         .testTag("search_submit_button"),

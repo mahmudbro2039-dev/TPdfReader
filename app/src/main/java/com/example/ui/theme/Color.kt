@@ -10,39 +10,39 @@ import androidx.compose.ui.graphics.compositeOver
 internal fun lightScheme(accent: Color) = lightColorScheme(
     primary = accent,
     onPrimary = Color.White,
-    primaryContainer = accent.copy(alpha = 0.10f).compositeOver(Color.White),
+    primaryContainer = accent.copy(alpha = 0.09f).compositeOver(Color.White),
     onPrimaryContainer = accent,
-    secondary = accent.copy(alpha = 0.72f).compositeOver(Color(0xFF4A4546)),
+    secondary = accent.copy(alpha = 0.72f).compositeOver(Color(0xFF475569)),
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFF2EEE9),
-    onSecondaryContainer = Color(0xFF1C1A1B),
-    background = Color(0xFFFAF8F5),          // warm ivory
-    onBackground = Color(0xFF1C1A1B),
+    secondaryContainer = Color(0xFFF1F5F9),
+    onSecondaryContainer = Color(0xFF0F172A),
+    background = Color.White,                 // pure crisp white
+    onBackground = Color(0xFF111827),
     surface = Color.White,
-    onSurface = Color(0xFF1C1A1B),
-    surfaceVariant = Color(0xFFF2EEE9),
-    onSurfaceVariant = Color(0xFF6B6560),
-    outline = Color(0xFFD9D2CA),
-    outlineVariant = Color(0xFFE8E2DB)
+    onSurface = Color(0xFF111827),
+    surfaceVariant = Color(0xFFF3F5F8),
+    onSurfaceVariant = Color(0xFF5C6675),
+    outline = Color(0xFFD5DCE4),
+    outlineVariant = Color(0xFFE7ECF2)
 )
 
 internal fun darkScheme(accent: Color) = darkColorScheme(
     primary = accent,
-    onPrimary = Color(0xFF2A0509),
-    primaryContainer = accent.copy(alpha = 0.16f).compositeOver(Color(0xFF1C1A1B)),
+    onPrimary = Color(0xFF0A1929),
+    primaryContainer = accent.copy(alpha = 0.16f).compositeOver(Color(0xFF161B22)),
     onPrimaryContainer = accent,
-    secondary = accent.copy(alpha = 0.65f).compositeOver(Color(0xFFB0A8A3)),
-    onSecondary = Color(0xFF1C1A1B),
-    secondaryContainer = Color(0xFF2A2728),
-    onSecondaryContainer = Color(0xFFEDE8E5),
-    background = Color(0xFF121112),
-    onBackground = Color(0xFFEDE8E5),
-    surface = Color(0xFF1C1A1B),
-    onSurface = Color(0xFFEDE8E5),
-    surfaceVariant = Color(0xFF2A2728),
-    onSurfaceVariant = Color(0xFFB0A8A3),
-    outline = Color(0xFF4A4546),
-    outlineVariant = Color(0xFF332F30)
+    secondary = accent.copy(alpha = 0.65f).compositeOver(Color(0xFF94A3B8)),
+    onSecondary = Color(0xFF0F172A),
+    secondaryContainer = Color(0xFF21262D),
+    onSecondaryContainer = Color(0xFFF0F6FC),
+    background = Color(0xFF0E1116),
+    onBackground = Color(0xFFF0F6FC),
+    surface = Color(0xFF161B22),
+    onSurface = Color(0xFFF0F6FC),
+    surfaceVariant = Color(0xFF21262D),
+    onSurfaceVariant = Color(0xFF9198A1),
+    outline = Color(0xFF3D444D),
+    outlineVariant = Color(0xFF282E36)
 )
 
 enum class ReadingStatus { ToRead, Reading, Completed, OnHold }
@@ -107,19 +107,19 @@ internal fun buildExtras(scheme: ColorScheme, dark: Boolean): TeenaColors {
         fg = base
     )
     val readerColors = ReaderSurfaceColors(
-        canvasLight = Color(0xFFE8E2DB),
-        canvasDark = Color(0xFF0B0A0B),
+        canvasLight = Color(0xFFF3F5F8),
+        canvasDark = Color(0xFF0A0D12),
         canvasSepia = Color(0xFFE6DEC8),
-        textLightBg = Color(0xFFFAF8F5),
-        textLightFg = Color(0xFF1C1A1B),
-        textLightSurface = Color(0xFFF2EEE9),
+        textLightBg = Color.White,
+        textLightFg = Color(0xFF111827),
+        textLightSurface = Color(0xFFF3F5F8),
         textSepiaBg = Color(0xFFF5ECD7),
         textSepiaFg = Color(0xFF3E2F1C),
         textSepiaAccent = Color(0xFF8C5000),
         textSepiaSurface = Color(0xFFEAE0C8),
-        textDarkBg = Color(0xFF121112),
-        textDarkFg = Color(0xFFEDE8E5),
-        textDarkSurface = Color(0xFF1C1A1B),
+        textDarkBg = Color(0xFF0E1116),
+        textDarkFg = Color(0xFFF0F6FC),
+        textDarkSurface = Color(0xFF161B22),
         draculaBg = Color(0xFF282A36),
         draculaSurface = Color(0xFF343746),
         draculaFg = Color(0xFFF8F8F2),

@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -92,6 +93,7 @@ class AppViewModel(
 ) : ViewModel() {
 
     private val _query = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _query.asStateFlow()
     private val _submittedQuery = MutableSharedFlow<String>(extraBufferCapacity = 1)
     private val _selectedStatusFilter = MutableStateFlow<ReadingStatus?>(null)
     private val _selectedFolderName = MutableStateFlow<String?>(null)
@@ -112,10 +114,10 @@ class AppViewModel(
         .map { DocsLoadState(isLoaded = true, docs = it) }
         .onStart { emit(DocsLoadState(isLoaded = false, docs = emptyList())) }
 
-    private val debouncedQuery: StateFlow<String> = merge(
+    private val deepSearchDebouncedQuery: StateFlow<String> = merge(
         _query
             .map { it.trim() }
-            .debounce { trimmed -> if (trimmed.isEmpty()) 0L else 280L },
+            .debounce { trimmed -> if (trimmed.isEmpty()) 0L else 220L },
         _submittedQuery.map { it.trim() }
     )
         .distinctUntilChanged()
@@ -126,7 +128,7 @@ class AppViewModel(
         )
 
     private val deepSearchFlow = combine(
-        debouncedQuery,
+        deepSearchDebouncedQuery,
         preferencesRepository.preferencesFlow.map { it.deepSearch }.distinctUntilChanged(),
         libraryRepository.allDocuments
     ) { q, deepEnabled, docs ->
@@ -267,10 +269,10 @@ class AppViewModel(
 
     private val searchInputsFlow = combine(
         _query,
-        debouncedQuery,
+        deepSearchDebouncedQuery,
         deepSearchFlow
-    ) { rawQuery, activeQuery, deepResult ->
-        SearchSnapshot(rawQuery, activeQuery, deepResult)
+    ) { rawQuery, deepQuery, deepResult ->
+        SearchSnapshot(rawQuery, deepQuery, deepResult)
     }
 
     private val scanProgressFlow = devicePdfScanner?.progress ?: MutableStateFlow(PdfScanProgress())
@@ -281,37 +283,36 @@ class AppViewModel(
         _bannerDismissed
     ) { access, scan, dismissed ->
         SystemAccessSnapshot(access, scan, dismissed)
-    }
+    }.distinctUntilChanged()
 
     val uiState: StateFlow<AppUiState> = combine(
-        derivedLibraryFlow,
+        derivedLibraryFlow.distinctUntilChanged(),
         searchInputsFlow,
         systemAccessFlow
     ) { lib, search, sys ->
-        val activeSearch = search.debouncedQuery
+        val rawTrimmed = search.rawQuery.trim()
+        val deepQuery = search.debouncedQuery
         val deepResult = search.deepResult
-        val searchResults = if (activeSearch.isBlank()) {
+        val searchResults = if (rawTrimmed.isEmpty()) {
             emptyList()
         } else {
-            val matchedByText = if (lib.deepSearch && deepResult.query == activeSearch) {
+            val matchedByText = if (lib.deepSearch && deepResult.query == deepQuery && deepQuery == rawTrimmed) {
                 deepResult.matchedUris
             } else {
                 emptySet()
             }
             sortItems(
                 lib.allItems.filter { item ->
-                    PdfTextExtractor.containsNormalized(item.title, activeSearch) ||
-                        PdfTextExtractor.containsNormalized(item.folderName, activeSearch) ||
+                    PdfTextExtractor.containsNormalized(item.title, rawTrimmed) ||
+                        PdfTextExtractor.containsNormalized(item.folderName, rawTrimmed) ||
                         matchedByText.contains(item.id)
                 },
                 lib.sortOrder
             )
         }
 
-        val rawTrimmed = search.rawQuery.trim()
-        val waitingForDebounce = rawTrimmed.isNotEmpty() && rawTrimmed != activeSearch
-        val waitingForDeep = lib.deepSearch && activeSearch.isNotEmpty() &&
-            (deepResult.isSearching || deepResult.query != activeSearch)
+        val waitingForDeep = lib.deepSearch && rawTrimmed.isNotEmpty() &&
+            (deepResult.isSearching || deepResult.query != rawTrimmed)
 
         AppUiState(
             themeMode = lib.themeMode,
@@ -330,7 +331,7 @@ class AppViewModel(
             statusCounts = lib.statusCounts,
             totalCount = lib.allItems.size,
             searchResults = searchResults,
-            isSearching = waitingForDebounce || waitingForDeep,
+            isSearching = waitingForDeep,
             bookmarks = lib.bookmarks,
             annotations = lib.annotations,
             hasAllFilesAccess = sys.access.hasAllFilesAccess,
@@ -341,6 +342,7 @@ class AppViewModel(
         )
     }
         .flowOn(Dispatchers.Default)
+        .distinctUntilChanged()
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000L),

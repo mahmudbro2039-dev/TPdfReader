@@ -76,6 +76,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,8 +88,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -860,6 +863,15 @@ private fun InPdfSearchOverlayBar(
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
     val focusManager = LocalFocusManager.current
+    var textFieldValue by remember {
+        mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
+    }
+    val currentOnQueryChange by rememberUpdatedState(onQueryChange)
+    LaunchedEffect(query) {
+        if (query != textFieldValue.text) {
+            textFieldValue = TextFieldValue(text = query, selection = TextRange(query.length))
+        }
+    }
 
     Surface(
         color = MaterialTheme.colorScheme.surface,
@@ -872,7 +884,7 @@ private fun InPdfSearchOverlayBar(
                 .fillMaxWidth()
                 .padding(horizontal = s.md, vertical = s.sm)
         ) {
-            if (isExtractingText && query.isNotBlank()) {
+            if (isExtractingText && textFieldValue.text.isNotBlank()) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(s.xs))
             }
@@ -881,8 +893,14 @@ private fun InPdfSearchOverlayBar(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
+                    value = textFieldValue,
+                    onValueChange = { updated ->
+                        val prev = textFieldValue.text
+                        textFieldValue = updated
+                        if (updated.text != prev) {
+                            currentOnQueryChange(updated.text)
+                        }
+                    },
                     placeholder = { Text(stringResource(R.string.reader_search_hint)) },
                     singleLine = true,
                     shape = MaterialTheme.shapes.medium,
@@ -893,10 +911,13 @@ private fun InPdfSearchOverlayBar(
                             focusManager.clearFocus()
                         }
                     ),
-                    trailingIcon = if (query.isNotEmpty()) {
+                    trailingIcon = if (textFieldValue.text.isNotEmpty()) {
                         {
                             IconButton(
-                                onClick = { onQueryChange("") },
+                                onClick = {
+                                    textFieldValue = TextFieldValue("")
+                                    currentOnQueryChange("")
+                                },
                                 modifier = Modifier
                                     .minimumInteractiveComponentSize()
                                     .testTag("in_pdf_search_clear")

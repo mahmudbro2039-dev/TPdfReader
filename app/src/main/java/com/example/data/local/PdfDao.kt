@@ -33,6 +33,15 @@ interface PdfDao {
     @Query("UPDATE pdf_documents SET pageCount = :pageCount WHERE uriString = :uriString AND pageCount <= 0")
     suspend fun fillMissingPageCount(uriString: String, pageCount: Int)
 
+    @Transaction
+    suspend fun fillMissingPageCounts(updates: Map<String, Int>) {
+        updates.forEach { (uriString, pageCount) ->
+            if (pageCount > 0) {
+                fillMissingPageCount(uriString, pageCount)
+            }
+        }
+    }
+
     @Query(
         "UPDATE pdf_documents SET currentPage = :page, pageCount = :pageCount, zoomScale = :zoomScale, lastOpenedAt = :timestamp, readingStatus = :status WHERE uriString = :uriString"
     )

@@ -365,11 +365,16 @@ class DevicePdfScanner(
 
     private suspend fun backfillMissingPageCounts(limit: Int) {
         val pendingUris = pdfDao.getDocumentsMissingPageCount(limit)
+        if (pendingUris.isEmpty()) return
+        val updates = LinkedHashMap<String, Int>(pendingUris.size)
         for (uri in pendingUris) {
             val pages = runCatching { pdfEngine.inspectPageCount(uri) }.getOrDefault(0)
             if (pages > 0) {
-                pdfDao.fillMissingPageCount(uri, pages)
+                updates[uri] = pages
             }
+        }
+        if (updates.isNotEmpty()) {
+            pdfDao.fillMissingPageCounts(updates)
         }
     }
 
@@ -448,7 +453,7 @@ class DevicePdfScanner(
     }
 
     private companion object {
-        const val BATCH_FLUSH_SIZE = 32
+        const val BATCH_FLUSH_SIZE = 64
         const val MIN_PDF_BYTES = 16L
         val SKIPPED_DIR_NAMES = setOf(
             "lost+found",

@@ -8,7 +8,10 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -23,9 +26,18 @@ object ThumbnailCache {
 
     // Allow 2 independent PdfRenderer cover decodes concurrently; disk hits run lock-free.
     private val renderSemaphore = Semaphore(2)
+    private val diskWriteScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
     private var cachedDiskDir: File? = null
+
+    private fun resolveDiskDir(context: Context): File {
+        cachedDiskDir?.let { return it }
+        val dir = File(context.cacheDir, "pdf_covers")
+        if (!dir.exists()) dir.mkdirs()
+        cachedDiskDir = dir
+        return dir
+    }
 
     fun peek(uri: String): Bitmap? {
         if (uri.isBlank()) return null
@@ -48,29 +60,26 @@ object ThumbnailCache {
         if (uri.isBlank()) return null
         peek(uri)?.let { return it }
 
-        val coversDir = File(context.cacheDir, "pdf_covers").also { dir ->
-            if (!dir.exists()) dir.mkdirs()
-            cachedDiskDir = dir
-        }
-        val diskFile = File(coversDir, "${md5(uri)}.jpg")
-
+        val appContext = context.applicationContext ?: context
         return withContext(Dispatchers.IO) {
             peek(uri)?.let { return@withContext it }
 
-            // Fast lock-free disk cache read
+            val diskFile = File(resolveDiskDir(appContext), "${md5(uri)}.jpg")
+
+            // Fast lock-free disk cache read using RGB_565 (half memory & faster GPU upload)
             if (diskFile.exists() && diskFile.length() > 0L) {
-                val decoded = runCatching { BitmapFactory.decodeFile(diskFile.absolutePath) }.getOrNull()
+                val decoded = decodeDiskBitmap(diskFile)
                 if (decoded != null && !decoded.isRecycled) {
                     cache.put(uri, decoded)
                     return@withContext decoded
                 }
             }
 
-            renderSemaphore.withPermit {
+            val rendered = renderSemaphore.withPermit {
                 peek(uri)?.let { return@withPermit it }
 
                 if (diskFile.exists() && diskFile.length() > 0L) {
-                    val decoded = runCatching { BitmapFactory.decodeFile(diskFile.absolutePath) }.getOrNull()
+                    val decoded = decodeDiskBitmap(diskFile)
                     if (decoded != null && !decoded.isRecycled) {
                         cache.put(uri, decoded)
                         return@withPermit decoded
@@ -78,15 +87,15 @@ object ThumbnailCache {
                 }
 
                 runCatching {
-                    openFileDescriptor(context, uri)?.use { pfd ->
+                    openFileDescriptor(appContext, uri)?.use { pfd ->
                         val renderer = PdfRenderer(pfd)
                         try {
                             if (renderer.pageCount <= 0) return@use null
                             val page = renderer.openPage(0)
                             try {
-                                val targetWidth = widthPx.coerceIn(320, 520)
+                                val targetWidth = widthPx.coerceIn(200, 360)
                                 val ratio = if (page.width > 0) page.height / page.width.toFloat() else 1.414f
-                                val targetHeight = (targetWidth * ratio).toInt().coerceIn(240, 820)
+                                val targetHeight = (targetWidth * ratio).toInt().coerceIn(220, 560)
                                 val bitmap = Bitmap.createBitmap(
                                     targetWidth,
                                     targetHeight,
@@ -96,12 +105,6 @@ object ThumbnailCache {
                                 }
                                 page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                                 cache.put(uri, bitmap)
-
-                                runCatching {
-                                    FileOutputStream(diskFile).use { out ->
-                                        bitmap.compress(Bitmap.CompressFormat.JPEG, 88, out)
-                                    }
-                                }
                                 bitmap
                             } finally {
                                 page.close()
@@ -112,8 +115,38 @@ object ThumbnailCache {
                     }
                 }.getOrNull()
             }
+
+            if (rendered != null && !diskFile.exists()) {
+                diskWriteScope.launch {
+                    runCatching {
+                        FileOutputStream(diskFile).use { out ->
+                            rendered.compress(Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                    }
+                }
+            }
+
+            rendered
         }
     }
+
+    suspend fun prewarm(context: Context, uris: List<String>, widthPx: Int = 280) {
+        if (uris.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            for (uri in uris) {
+                if (peek(uri) == null) {
+                    load(context, uri, widthPx)
+                }
+            }
+        }
+    }
+
+    private fun decodeDiskBitmap(diskFile: File): Bitmap? = runCatching {
+        val opts = BitmapFactory.Options().apply {
+            inPreferredConfig = Bitmap.Config.RGB_565
+        }
+        BitmapFactory.decodeFile(diskFile.absolutePath, opts)
+    }.getOrNull()
 
     private fun openFileDescriptor(context: Context, uriString: String): ParcelFileDescriptor? {
         val parsed = Uri.parse(uriString)

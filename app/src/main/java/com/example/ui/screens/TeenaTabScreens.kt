@@ -80,15 +80,13 @@ fun RecentTabScreen(
                 item(key = "hero", contentType = "hero") {
                     HeroContinueCard(
                         item = heroItem,
-                        onClick = { onOpenPdf(heroItem) },
-                        modifier = Modifier.animateItem()
+                        onClick = { onOpenPdf(heroItem) }
                     )
                 }
                 if (remainingItems.isNotEmpty()) {
                     item(key = "recent_header", contentType = "header") {
                         SectionHeader(
-                            text = stringResource(R.string.recent_history),
-                            modifier = Modifier.animateItem()
+                            text = stringResource(R.string.recent_history)
                         )
                     }
                     items(
@@ -100,8 +98,7 @@ fun RecentTabScreen(
                             item = item,
                             onClick = { onOpenPdf(item) },
                             onMore = onItemMore,
-                            compact = true,
-                            modifier = Modifier.animateItem()
+                            compact = true
                         )
                     }
                 }
@@ -406,8 +403,7 @@ fun SearchResultsScreen(
                         PdfRowCard(
                             item = item,
                             onClick = { onOpenPdf(item) },
-                            onMore = onItemMore,
-                            modifier = Modifier.animateItem()
+                            onMore = onItemMore
                         )
                     }
                 }

@@ -1,8 +1,11 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
@@ -17,18 +20,17 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
 import com.example.ui.components.AboutTeenaDialog
 import com.example.ui.components.DeviceAccessStatusBanner
 import com.example.ui.components.DeviceScanProgressStrip
@@ -37,6 +39,7 @@ import com.example.ui.components.SortBottomSheet
 import com.example.ui.components.TeenaBottomBar
 import com.example.ui.components.TeenaTab
 import com.example.ui.components.TeenaTopBar
+import com.example.ui.components.ThumbnailCache
 import com.example.ui.components.TopBarMenuCallbacks
 import com.example.ui.components.buildMenu
 import com.example.ui.model.PdfItem
@@ -54,12 +57,9 @@ fun TeenaApp(
     onRequestBatteryExemption: () -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-    val tabNavController = rememberNavController()
-    val navBackStackEntry by tabNavController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: TeenaTab.Recent.route
-    val currentTab = remember(currentRoute) {
-        TeenaTab.entries.firstOrNull { it.route == currentRoute } ?: TeenaTab.Recent
-    }
+    val liveQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    var currentTab by rememberSaveable { mutableStateOf(TeenaTab.Recent) }
+    val tabStateHolder = rememberSaveableStateHolder()
 
     val systemDark = isSystemInDarkTheme()
     val isCurrentlyDark = when (uiState.themeMode) {
@@ -68,12 +68,26 @@ fun TeenaApp(
         ThemeMode.Dark -> true
     }
 
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val motion = TeenaTheme.motion
     val recentListState = rememberLazyListState()
     val libraryListState = rememberLazyListState()
     val libraryGridState = rememberLazyGridState()
     val foldersListState = rememberLazyListState()
     val foldersGridState = rememberLazyGridState()
+
+    val prewarmUris = remember(uiState.libraryItems, uiState.folderItems) {
+        (uiState.libraryItems.take(9).map { it.uri } +
+            uiState.folderItems.take(4).flatMap { it.previewUris })
+            .distinct()
+            .take(12)
+    }
+    LaunchedEffect(prewarmUris) {
+        if (prewarmUris.isNotEmpty()) {
+            ThumbnailCache.prewarm(context, prewarmUris)
+        }
+    }
 
     var showSortSheet by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
@@ -100,14 +114,17 @@ fun TeenaApp(
         callbacks = menuCallbacks
     )
 
-    val motion = TeenaTheme.motion
+    val isSearchMode = liveQuery.isNotBlank()
+    BackHandler(enabled = !isSearchMode && currentTab != TeenaTab.Recent) {
+        currentTab = TeenaTab.Recent
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = {
             TeenaTopBar(
-                query = uiState.query,
+                query = liveQuery,
                 onQueryChange = viewModel::onQueryChange,
                 onSearch = viewModel::onSubmitSearch,
                 menu = menuActions
@@ -117,16 +134,12 @@ fun TeenaApp(
             TeenaBottomBar(
                 currentTab = currentTab,
                 onSelectTab = { targetTab ->
-                    if (uiState.query.isNotEmpty()) {
+                    if (liveQuery.isNotEmpty()) {
                         viewModel.onQueryChange("")
+                        focusManager.clearFocus()
                     }
-                    focusManager.clearFocus()
-                    tabNavController.navigate(targetTab.route) {
-                        popUpTo(tabNavController.graph.findStartDestination().id) {
-                            saveState = true
-                        }
-                        launchSingleTop = true
-                        restoreState = true
+                    if (currentTab != targetTab) {
+                        currentTab = targetTab
                     }
                 }
             )
@@ -157,75 +170,73 @@ fun TeenaApp(
                     .weight(1f)
                     .fillMaxWidth()
             ) {
-                val isSearchMode = uiState.query.isNotBlank()
-                AnimatedContent(
-                    targetState = isSearchMode,
-                    transitionSpec = {
-                        fadeIn(motion.normalSpec()) togetherWith fadeOut(motion.fastSpec())
-                    },
-                    label = "search_or_tabs"
-                ) { searching ->
-                    if (searching) {
-                        SearchResultsScreen(
-                            isSearching = uiState.isSearching,
-                            results = uiState.searchResults,
-                            onOpenPdf = { onOpenDocument(it.uri, null) },
-                            onItemMore = { activeItemForMenu = it },
-                            onPickPdf = onPickPdf
-                        )
-                    } else {
-                    NavHost(
-                        navController = tabNavController,
-                        startDestination = TeenaTab.Recent.route,
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        composable(TeenaTab.Recent.route) {
-                            RecentTabScreen(
-                                isLoading = uiState.isLoading,
-                                heroItem = uiState.heroItem,
-                                remainingItems = uiState.recentRemainingItems,
-                                listState = recentListState,
-                                onOpenPdf = { onOpenDocument(it.uri, null) },
-                                onItemMore = { activeItemForMenu = it },
-                                onPickPdf = onPickPdf
-                            )
-                        }
+                if (isSearchMode) {
+                    SearchResultsScreen(
+                        isSearching = uiState.isSearching,
+                        results = uiState.searchResults,
+                        onOpenPdf = { onOpenDocument(it.uri, null) },
+                        onItemMore = { activeItemForMenu = it },
+                        onPickPdf = onPickPdf
+                    )
+                } else {
+                    AnimatedContent(
+                        targetState = currentTab,
+                        transitionSpec = {
+                            val forward = targetState.ordinal >= initialState.ordinal
+                            val enter = fadeIn(motion.tabEnterSpec()) + slideInHorizontally(motion.tabSlideSpec()) { w ->
+                                if (forward) w / 18 else -w / 18
+                            }
+                            val exit = fadeOut(motion.tabExitSpec()) + slideOutHorizontally(motion.tabSlideSpec()) { w ->
+                                if (forward) -w / 24 else w / 24
+                            }
+                            (enter togetherWith exit) using null
+                        },
+                        label = "tab_switch"
+                    ) { tab ->
+                        tabStateHolder.SaveableStateProvider(tab.route) {
+                            when (tab) {
+                                TeenaTab.Recent -> RecentTabScreen(
+                                    isLoading = uiState.isLoading,
+                                    heroItem = uiState.heroItem,
+                                    remainingItems = uiState.recentRemainingItems,
+                                    listState = recentListState,
+                                    onOpenPdf = { onOpenDocument(it.uri, null) },
+                                    onItemMore = { activeItemForMenu = it },
+                                    onPickPdf = onPickPdf
+                                )
 
-                        composable(TeenaTab.Library.route) {
-                            LibraryTabScreen(
-                                isLoading = uiState.isLoading,
-                                items = uiState.libraryItems,
-                                viewMode = uiState.viewMode,
-                                selectedStatus = uiState.selectedStatusFilter,
-                                statusCounts = uiState.statusCounts,
-                                totalCount = uiState.totalCount,
-                                listState = libraryListState,
-                                gridState = libraryGridState,
-                                onSelectStatus = viewModel::selectStatusFilter,
-                                onOpenPdf = { onOpenDocument(it.uri, null) },
-                                onItemMore = { activeItemForMenu = it },
-                                onPickPdf = onPickPdf
-                            )
-                        }
+                                TeenaTab.Library -> LibraryTabScreen(
+                                    isLoading = uiState.isLoading,
+                                    items = uiState.libraryItems,
+                                    viewMode = uiState.viewMode,
+                                    selectedStatus = uiState.selectedStatusFilter,
+                                    statusCounts = uiState.statusCounts,
+                                    totalCount = uiState.totalCount,
+                                    listState = libraryListState,
+                                    gridState = libraryGridState,
+                                    onSelectStatus = viewModel::selectStatusFilter,
+                                    onOpenPdf = { onOpenDocument(it.uri, null) },
+                                    onItemMore = { activeItemForMenu = it },
+                                    onPickPdf = onPickPdf
+                                )
 
-                        composable(TeenaTab.Folders.route) {
-                            FoldersTabScreen(
-                                isLoading = uiState.isLoading,
-                                folders = uiState.folderItems,
-                                selectedFolderName = uiState.selectedFolderName,
-                                folderPdfs = uiState.currentFolderItems,
-                                listState = foldersListState,
-                                gridState = foldersGridState,
-                                onOpenFolder = viewModel::openFolder,
-                                onCloseFolder = viewModel::closeFolder,
-                                onOpenPdf = { onOpenDocument(it.uri, null) },
-                                onItemMore = { activeItemForMenu = it },
-                                onPickPdf = onPickPdf
-                            )
+                                TeenaTab.Folders -> FoldersTabScreen(
+                                    isLoading = uiState.isLoading,
+                                    folders = uiState.folderItems,
+                                    selectedFolderName = uiState.selectedFolderName,
+                                    folderPdfs = uiState.currentFolderItems,
+                                    listState = foldersListState,
+                                    gridState = foldersGridState,
+                                    onOpenFolder = viewModel::openFolder,
+                                    onCloseFolder = viewModel::closeFolder,
+                                    onOpenPdf = { onOpenDocument(it.uri, null) },
+                                    onItemMore = { activeItemForMenu = it },
+                                    onPickPdf = onPickPdf
+                                )
+                            }
                         }
                     }
                 }
-            }
             }
         }
     }

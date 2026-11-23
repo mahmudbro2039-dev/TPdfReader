@@ -4,7 +4,9 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.animation.core.InfiniteRepeatableSpec
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.unit.Dp
@@ -32,8 +34,8 @@ data class Spacing(
 @Immutable
 data class Sizes(
     val topBarHeight: Dp = 54.dp,
-    val searchHeight: Dp = 36.dp,
-    val searchButton: Dp = 28.dp,
+    val searchHeight: Dp = 38.dp,
+    val searchButton: Dp = 30.dp,
     val heroPlayButton: Dp = 36.dp,
     val searchIcon: Dp = 16.dp,
     val iconButton: Dp = 48.dp,           // min touch target
@@ -105,17 +107,29 @@ data class Sizes(
 
 @Immutable
 data class Motion(
+    val snap: Int = 85,
     val fast: Int = 150,
     val normal: Int = 250,
     val slow: Int = 450,
     val shimmer: Int = 900,
+    val tabEnter: Int = 150,
+    val tabExit: Int = 100,
+    val tabSlide: Int = 160,
     val searchDebounceMs: Long = 300L
 ) {
+    fun <T> snapSpec(): FiniteAnimationSpec<T> = tween(durationMillis = snap)
     fun <T> fastSpec(): FiniteAnimationSpec<T> = tween(durationMillis = fast)
     fun <T> normalSpec(): FiniteAnimationSpec<T> = tween(durationMillis = normal)
     fun <T> slowSpec(): FiniteAnimationSpec<T> = tween(durationMillis = slow)
-    fun navFadeSpec(): FiniteAnimationSpec<Float> = tween(durationMillis = fast, easing = FastOutSlowInEasing)
+    fun navFadeSpec(): FiniteAnimationSpec<Float> = tween(durationMillis = snap, easing = FastOutSlowInEasing)
     fun navSlideSpec(): FiniteAnimationSpec<IntOffset> = tween(durationMillis = normal, easing = FastOutSlowInEasing)
+    fun <T> tabEnterSpec(): FiniteAnimationSpec<T> = tween(durationMillis = tabEnter, easing = FastOutSlowInEasing)
+    fun <T> tabExitSpec(): FiniteAnimationSpec<T> = tween(durationMillis = tabExit, easing = FastOutSlowInEasing)
+    fun tabSlideSpec(): FiniteAnimationSpec<IntOffset> = tween(durationMillis = tabSlide, easing = FastOutSlowInEasing)
+    fun tabPillSpringSpec(): FiniteAnimationSpec<Float> = spring(
+        dampingRatio = Spring.DampingRatioNoBouncy,
+        stiffness = Spring.StiffnessMediumLow
+    )
     fun shimmerSpec(): InfiniteRepeatableSpec<Float> = infiniteRepeatable(
         animation = tween(durationMillis = shimmer),
         repeatMode = RepeatMode.Reverse

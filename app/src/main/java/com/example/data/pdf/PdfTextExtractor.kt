@@ -485,9 +485,11 @@ class PdfTextExtractor(private val context: Context) {
         private val multiNewlineRegex = Regex("\\n{3,}")
 
         fun containsNormalized(haystack: String, query: String): Boolean {
-            val needle = query.trim().replace(whitespaceRegex, " ")
-            if (needle.isEmpty()) return false
-            if (haystack.contains(needle, ignoreCase = true)) return true
+            val trimmed = query.trim()
+            if (trimmed.isEmpty()) return false
+            if (haystack.contains(trimmed, ignoreCase = true)) return true
+            val needle = trimmed.replace(whitespaceRegex, " ")
+            if (needle != trimmed && haystack.contains(needle, ignoreCase = true)) return true
             val normalizedHaystack = haystack.replace(whitespaceRegex, " ")
             return normalizedHaystack.contains(needle, ignoreCase = true)
         }

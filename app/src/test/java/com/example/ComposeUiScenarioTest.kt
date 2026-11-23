@@ -7,6 +7,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.MjPdfDatabase
@@ -178,5 +179,76 @@ class ComposeUiScenarioTest {
         composeRule.onNodeWithTag("banner_dismiss_button").performClick()
         composeRule.waitForIdle()
         composeRule.onNodeWithTag("device_access_banner").assertDoesNotExist()
+    }
+
+    @Test
+    fun `TeenaApp top search accepts typing smoothly and switches tabs without lag`() {
+        runBlocking {
+            db.pdfDao().upsertDocument(
+                PdfDocumentEntity(
+                    uriString = "file:///kotlin_coroutines.pdf",
+                    title = "Kotlin Coroutines Guide",
+                    folderName = "Programming",
+                    fileSizeBytes = 12_000L,
+                    pageCount = 15,
+                    currentPage = 2,
+                    readingStatus = ReadingStatus.READING.name,
+                    lastOpenedAt = System.currentTimeMillis()
+                )
+            )
+            db.pdfDao().upsertDocument(
+                PdfDocumentEntity(
+                    uriString = "file:///calculus_notes.pdf",
+                    title = "Calculus Notes",
+                    folderName = "Math",
+                    fileSizeBytes = 8_000L,
+                    pageCount = 12,
+                    currentPage = 0,
+                    readingStatus = ReadingStatus.TO_READ.name,
+                    lastOpenedAt = System.currentTimeMillis() - 1_000L
+                )
+            )
+        }
+
+        val appViewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+
+        composeRule.setContent {
+            TeenaTheme {
+                TeenaApp(
+                    viewModel = appViewModel,
+                    onPickPdf = {},
+                    onOpenDocument = { _, _ -> },
+                    onOpenSettings = {}
+                )
+            }
+        }
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("top_search_field").performClick()
+        composeRule.onNodeWithTag("top_search_field").performTextInput("Kotlin")
+        composeRule.waitUntil(timeoutMillis = 3_000L) {
+            composeRule.onAllNodesWithText("Kotlin Coroutines Guide").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Kotlin Coroutines Guide").assertIsDisplayed()
+        composeRule.onNodeWithTag("search_clear_button").performClick()
+        composeRule.waitForIdle()
+
+        composeRule.onNodeWithTag("top_search_field").performTextInput("Calculus")
+        composeRule.waitUntil(timeoutMillis = 3_000L) {
+            composeRule.onAllNodesWithText("Calculus Notes").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithText("Calculus Notes").assertIsDisplayed()
+
+        // Switching tab clears search and switches immediately
+        composeRule.onNodeWithTag("bottom_tab_library").performClick()
+        composeRule.waitUntil(timeoutMillis = 2_000L) {
+            composeRule.onAllNodesWithText("Kotlin Coroutines Guide").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("bottom_tab_folders").performClick()
+        composeRule.waitUntil(timeoutMillis = 2_000L) {
+            composeRule.onAllNodesWithText("Programming").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("bottom_tab_recent").performClick()
+        composeRule.waitForIdle()
     }
 }
