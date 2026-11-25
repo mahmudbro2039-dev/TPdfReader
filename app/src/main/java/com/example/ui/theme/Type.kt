@@ -78,11 +78,13 @@ val TeenaBadgeNumberStyle: TextStyle = TextStyle(
     letterSpacing = 0.sp
 )
 
+const val TextModeLineHeightFactor = 1.6f
+
 /** Dynamic Text Mode typography helper centralized inside ui/theme so screens never hardcode .sp or FontFamily. */
 fun readerTextModeStyle(
     useSerif: Boolean,
     fontSizeSp: Float,
-    lineHeightMultiplier: Float
+    lineHeightMultiplier: Float = TextModeLineHeightFactor
 ): TextStyle = TextStyle(
     fontFamily = if (useSerif) FontFamily.Serif else TeenaFonts.body,
     fontSize = fontSizeSp.sp,

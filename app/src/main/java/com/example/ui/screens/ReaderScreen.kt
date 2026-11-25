@@ -1,7 +1,10 @@
 package com.example.ui.screens
 
 import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.net.Uri
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
@@ -88,33 +91,46 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.data.model.PdfColorMode
+import com.example.data.model.ReadingProgress
+import com.example.data.search.SearchTextNormalizer
+import com.example.data.search.parseSnippet
 import com.example.ui.components.AnnotationsBottomSheet
 import com.example.ui.components.BookmarksAndTocBottomSheet
 import com.example.ui.components.DocumentLinksBottomSheet
 import com.example.ui.components.GoToPageDialog
 import com.example.ui.components.PdfDocumentViewport
 import com.example.ui.components.QuickToolsBottomSheet
+import com.example.ui.components.RemoveDocumentConfirmDialog
 import com.example.ui.components.ShareQuoteBottomSheet
 import com.example.ui.components.SignaturePadBottomSheet
 import com.example.ui.components.pdfColorFilterFor
 import com.example.ui.components.readerCanvasColorFor
 import com.example.ui.theme.EdgeHandleShape
 import com.example.ui.theme.TeenaTheme
+import com.example.ui.viewmodel.OrientationLock
 import com.example.ui.viewmodel.ReaderLoadState
 import com.example.ui.viewmodel.ReaderViewModel
 import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 @Composable
 fun ReaderScreen(
@@ -124,9 +140,10 @@ fun ReaderScreen(
     onNavigateBack: () -> Unit,
     onOpenTextMode: () -> Unit,
     onOpenSettings: () -> Unit,
-    onRotateScreen: () -> Unit,
+    onRotateScreen: () -> Unit = {},
     onSharePdf: (uri: String, title: String) -> Unit,
-    onPrintPdf: (uri: String, title: String) -> Unit
+    onPrintPdf: (uri: String, title: String) -> Unit,
+    onRemoveFromLibrary: () -> Unit = {}
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
@@ -135,7 +152,7 @@ fun ReaderScreen(
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     val view = LocalView.current
     val context = LocalContext.current
-    val activity = context as? Activity
+    val activity = remember(context) { context.findActivity() }
 
     var showGoToPageDialog by remember { mutableStateOf(false) }
     var showBookmarksAndTocSheet by remember { mutableStateOf(false) }
@@ -144,6 +161,7 @@ fun ReaderScreen(
     var showShareQuoteSheet by remember { mutableStateOf(false) }
     var showLinksSheet by remember { mutableStateOf(false) }
     var showToolsSheet by remember { mutableStateOf(false) }
+    var showRemoveErrorConfirm by remember { mutableStateOf(false) }
     var isQuickMenuExpanded by remember(uriString) { mutableStateOf(false) }
 
     var shareQuoteInitialText by remember { mutableStateOf("") }
@@ -217,6 +235,23 @@ fun ReaderScreen(
         }
     }
 
+    LaunchedEffect(state.orientationLock, activity) {
+        val host = activity ?: return@LaunchedEffect
+        host.requestedOrientation = when (state.orientationLock) {
+            OrientationLock.LOCKED -> ActivityInfo.SCREEN_ORIENTATION_LOCKED
+            OrientationLock.AUTO -> ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+
+    DisposableEffect(activity) {
+        onDispose {
+            val host = activity ?: return@onDispose
+            if (!host.isChangingConfigurations) {
+                host.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+    }
+
     val isCurrentDoc = state.uriString == uriString
     val effectiveLoadState = if (isCurrentDoc) state.loadState else ReaderLoadState.Loading
     val effectiveColorMode = if (isCurrentDoc) state.colorMode else prefs.defaultPdfColorMode
@@ -267,7 +302,8 @@ fun ReaderScreen(
                         matchCount = state.searchMatches.size,
                         activeMatchIndex = state.activeSearchMatchIndex,
                         activeSnippet = state.searchMatches.getOrNull(state.activeSearchMatchIndex)?.snippet,
-                        isExtractingText = state.isExtractingText,
+                        isSearchIndexing = state.isSearchIndexing,
+                        searchStatusText = state.searchStatusRes?.let { stringResource(it) },
                         onQueryChange = viewModel::updateSearchQuery,
                         onPrevMatch = { viewModel.navigateSearchMatch(-1) },
                         onNextMatch = { viewModel.navigateSearchMatch(1) },
@@ -296,9 +332,8 @@ fun ReaderScreen(
 
                 is ReaderLoadState.Error -> {
                     ReaderErrorState(
-                        message = load.message,
-                        onRetry = { viewModel.openDocument(uriString, initialPage) },
-                        onBack = onNavigateBack
+                        onBack = onNavigateBack,
+                        onRemoveFromLibrary = { showRemoveErrorConfirm = true }
                     )
                 }
 
@@ -311,7 +346,10 @@ fun ReaderScreen(
                         canvasColor = canvasColor,
                         peekPage = viewModel::peekPageBitmap,
                         renderPage = viewModel::renderPageBitmap,
+                        renderRegion = viewModel::renderPageRegion,
                         onPageChanged = viewModel::onPageScrolled,
+                        onPageIndicatorChanged = { page -> viewModel.onPageScrolled(page, persistProgress = false) },
+                        onPageSettled = viewModel::onPageSettled,
                         onPendingScrollConsumed = viewModel::consumePendingScrollTarget,
                         onZoomChange = viewModel::setZoomScale,
                         onToggleChrome = {
@@ -326,13 +364,14 @@ fun ReaderScreen(
                     )
 
                     if (prefs.showPageIndicatorPill) {
-                        val progressPct = if (state.pageCount <= 0) {
-                            0
-                        } else {
-                            ((state.currentPage + 1).toFloat() / state.pageCount.toFloat() * 100f)
-                                .coerceIn(0f, 100f)
-                                .roundToInt()
-                        }
+                        val progressPct = ReadingProgress.percent(
+                            ReadingProgress.fraction(
+                                currentPage = state.currentPage,
+                                pageCount = state.pageCount,
+                                lastOpenedAt = 1L,
+                                isCompleted = false
+                            )
+                        )
                         Surface(
                             onClick = { showGoToPageDialog = true },
                             color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.82f),
@@ -345,7 +384,12 @@ fun ReaderScreen(
                                 .testTag("floating_page_pill")
                         ) {
                             Text(
-                                text = "${state.currentPage + 1} / ${state.pageCount.coerceAtLeast(1)}  ·  $progressPct%",
+                                text = stringResource(
+                                    R.string.reader_page_progress_pill,
+                                    state.currentPage + 1,
+                                    state.pageCount.coerceAtLeast(1),
+                                    progressPct
+                                ),
                                 style = MaterialTheme.typography.labelSmall,
                                 modifier = Modifier.padding(horizontal = s.md, vertical = s.xs)
                             )
@@ -388,6 +432,7 @@ fun ReaderScreen(
                             isBookmarked = state.isCurrentPageBookmarked,
                             isZoomLocked = state.isZoomLocked,
                             hideMargins = state.hideMargins,
+                            isOrientationLocked = state.orientationLock == OrientationLock.LOCKED,
                             isAutoScrollActive = state.isAutoScrollActive,
                             colorMode = state.colorMode,
                             isBrightnessOpen = state.isBrightnessOverlayVisible,
@@ -397,7 +442,10 @@ fun ReaderScreen(
                             onToggleZoomLock = viewModel::toggleZoomLock,
                             onToggleHideMargins = viewModel::toggleHideMargins,
                             onToggleBrightness = viewModel::toggleBrightnessOverlay,
-                            onRotateScreen = onRotateScreen,
+                            onRotateScreen = {
+                                viewModel.toggleOrientationLock()
+                                onRotateScreen()
+                            },
                             onToggleAutoScroll = viewModel::toggleAutoScroll,
                             onCycleColorMode = viewModel::cycleColorMode,
                             modifier = Modifier.align(Alignment.CenterEnd)
@@ -451,6 +499,7 @@ fun ReaderScreen(
     }
 
     if (showBookmarksAndTocSheet) {
+        LaunchedEffect(state.uriString) { viewModel.loadStructureIfNeeded() }
         BookmarksAndTocBottomSheet(
             currentPage = state.currentPage,
             bookmarks = state.bookmarks,
@@ -465,7 +514,8 @@ fun ReaderScreen(
     }
 
     if (showAnnotationsSheet) {
-        val currentText = state.extractedTextPages.getOrElse(state.currentPage) { "" }
+        LaunchedEffect(state.uriString, state.currentPage) { viewModel.loadCurrentPageTextIfNeeded() }
+        val currentText = state.currentPageText
         AnnotationsBottomSheet(
             currentPage = state.currentPage,
             currentPageTextSnippet = currentText,
@@ -493,7 +543,8 @@ fun ReaderScreen(
     }
 
     if (showShareQuoteSheet) {
-        val fallbackQuote = state.extractedTextPages.getOrElse(state.currentPage) { "" }
+        LaunchedEffect(state.uriString, state.currentPage) { viewModel.loadCurrentPageTextIfNeeded() }
+        val fallbackQuote = state.currentPageText
             .lines()
             .firstOrNull { it.length > 32 }
             ?: ""
@@ -509,6 +560,7 @@ fun ReaderScreen(
     }
 
     if (showLinksSheet) {
+        LaunchedEffect(state.uriString) { viewModel.loadStructureIfNeeded() }
         DocumentLinksBottomSheet(
             links = state.documentLinks,
             onDismiss = { showLinksSheet = false },
@@ -551,10 +603,23 @@ fun ReaderScreen(
             },
             onOpenDocumentLinks = { showLinksSheet = true },
             onOpenTextMode = onOpenTextMode,
-            onRotateScreen = onRotateScreen,
+            onRotateScreen = {
+                viewModel.toggleOrientationLock()
+                onRotateScreen()
+            },
             onSharePdf = { onSharePdf(state.uriString, state.documentTitle) },
             onPrintPdf = { onPrintPdf(state.uriString, state.documentTitle) },
             onOpenSettings = onOpenSettings
+        )
+    }
+
+    if (showRemoveErrorConfirm) {
+        RemoveDocumentConfirmDialog(
+            onConfirm = {
+                showRemoveErrorConfirm = false
+                onRemoveFromLibrary()
+            },
+            onDismiss = { showRemoveErrorConfirm = false }
         )
     }
 }
@@ -659,6 +724,7 @@ private fun CollapsibleEdgeQuickMenu(
     isBookmarked: Boolean,
     isZoomLocked: Boolean,
     hideMargins: Boolean,
+    isOrientationLocked: Boolean,
     isAutoScrollActive: Boolean,
     colorMode: PdfColorMode,
     isBrightnessOpen: Boolean,
@@ -793,8 +859,11 @@ private fun CollapsibleEdgeQuickMenu(
                     )
                     EdgeQuickActionButton(
                         icon = Icons.Filled.ScreenRotation,
-                        description = stringResource(R.string.reader_rotate),
-                        active = false,
+                        description = stringResource(
+                            if (isOrientationLocked) R.string.reader_orientation_locked
+                            else R.string.reader_orientation_lock
+                        ),
+                        active = isOrientationLocked,
                         onClick = onRotateScreen,
                         tag = "shortcut_rotate"
                     )
@@ -854,7 +923,8 @@ private fun InPdfSearchOverlayBar(
     matchCount: Int,
     activeMatchIndex: Int,
     activeSnippet: String?,
-    isExtractingText: Boolean,
+    isSearchIndexing: Boolean,
+    searchStatusText: String?,
     onQueryChange: (String) -> Unit,
     onPrevMatch: () -> Unit,
     onNextMatch: () -> Unit,
@@ -862,6 +932,7 @@ private fun InPdfSearchOverlayBar(
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
     val focusManager = LocalFocusManager.current
     var textFieldValue by remember {
         mutableStateOf(TextFieldValue(text = query, selection = TextRange(query.length)))
@@ -874,7 +945,7 @@ private fun InPdfSearchOverlayBar(
     }
 
     Surface(
-        color = MaterialTheme.colorScheme.surface,
+        color = cs.surface,
         tonalElevation = sz.heroElevation,
         shadowElevation = sz.heroElevation,
         modifier = Modifier.fillMaxWidth()
@@ -884,7 +955,7 @@ private fun InPdfSearchOverlayBar(
                 .fillMaxWidth()
                 .padding(horizontal = s.md, vertical = s.sm)
         ) {
-            if (isExtractingText && textFieldValue.text.isNotBlank()) {
+            if (isSearchIndexing) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(s.xs))
             }
@@ -934,22 +1005,23 @@ private fun InPdfSearchOverlayBar(
                         .testTag("in_pdf_search_input")
                 )
                 Spacer(modifier = Modifier.width(s.sm))
+                val hasValidQuery = SearchTextNormalizer.buildMatchQuery(query) != null
                 val statusLabel = when {
                     matchCount > 0 -> stringResource(
                         R.string.reader_match_counter,
                         activeMatchIndex + 1,
                         matchCount
                     )
-                    query.isNotBlank() && !isExtractingText -> stringResource(R.string.reader_no_matches)
+                    hasValidQuery && !isSearchIndexing -> stringResource(R.string.reader_no_matches)
                     else -> stringResource(R.string.reader_match_counter, 0, 0)
                 }
                 Text(
                     text = statusLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = if (matchCount > 0) {
-                        MaterialTheme.colorScheme.primary
+                        cs.primary
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        cs.onSurfaceVariant
                     }
                 )
                 IconButton(
@@ -979,12 +1051,39 @@ private fun InPdfSearchOverlayBar(
                     Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                 }
             }
-            if (!activeSnippet.isNullOrBlank()) {
+            if (!searchStatusText.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(s.xs))
                 Text(
-                    text = activeSnippet,
+                    text = searchStatusText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = cs.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .padding(horizontal = s.xs)
+                        .testTag("in_pdf_search_status")
+                )
+            }
+            if (!activeSnippet.isNullOrBlank()) {
+                val chunks = remember(activeSnippet) { parseSnippet(activeSnippet) }
+                val annotated = remember(chunks, cs.primary) {
+                    buildAnnotatedString {
+                        for ((text, highlighted) in chunks) {
+                            if (highlighted) {
+                                withStyle(SpanStyle(color = cs.primary, fontWeight = FontWeight.Bold)) {
+                                    append(text)
+                                }
+                            } else {
+                                append(text)
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(s.xs))
+                Text(
+                    text = annotated,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = cs.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(horizontal = s.xs)
@@ -1090,9 +1189,8 @@ private fun BrightnessControlOverlay(
 
 @Composable
 private fun ReaderErrorState(
-    message: String,
-    onRetry: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onRemoveFromLibrary: () -> Unit
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
@@ -1117,14 +1215,24 @@ private fun ReaderErrorState(
         )
         Spacer(modifier = Modifier.height(s.sm))
         Text(
-            text = message,
+            text = stringResource(R.string.cannot_open_pdf),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(s.xl))
         Row(horizontalArrangement = Arrangement.spacedBy(s.md)) {
-            TextButton(onClick = onBack) { Text(stringResource(R.string.action_back)) }
-            Button(onClick = onRetry) { Text(stringResource(R.string.reader_error_retry)) }
+            TextButton(
+                onClick = onBack,
+                modifier = Modifier.testTag("reader_error_back_button")
+            ) {
+                Text(stringResource(R.string.action_back))
+            }
+            Button(
+                onClick = onRemoveFromLibrary,
+                modifier = Modifier.testTag("reader_error_remove_button")
+            ) {
+                Text(stringResource(R.string.remove_from_library))
+            }
         }
     }
 }

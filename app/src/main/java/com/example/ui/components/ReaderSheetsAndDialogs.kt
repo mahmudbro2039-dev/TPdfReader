@@ -82,7 +82,9 @@ import com.example.data.model.PdfColorMode
 import com.example.data.model.ReadingStatus
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.TocEntry
+import com.example.ui.theme.Alpha
 import com.example.ui.theme.TeenaTheme
+import com.example.ui.viewmodel.OrientationLock
 import com.example.ui.viewmodel.ReaderUiState
 import java.util.Locale
 
@@ -177,17 +179,17 @@ fun BookmarksAndTocBottomSheet(
                 Tab(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    text = { Text("Contents (${tocEntries.size})") }
+                    text = { Text(stringResource(R.string.reader_tab_contents, tocEntries.size)) }
                 )
                 Tab(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    text = { Text("Bookmarks (${bookmarks.size})") }
+                    text = { Text(stringResource(R.string.reader_tab_bookmarks, bookmarks.size)) }
                 )
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("History (${visitedHistory.size})") }
+                    text = { Text(stringResource(R.string.reader_tab_history, visitedHistory.size)) }
                 )
             }
 
@@ -250,7 +252,7 @@ fun BookmarksAndTocBottomSheet(
                                         shape = MaterialTheme.shapes.small
                                     ) {
                                         Text(
-                                            text = "p. ${entry.pageIndex + 1}",
+                                            text = stringResource(R.string.reader_page_short, entry.pageIndex + 1),
                                             style = MaterialTheme.typography.labelSmall,
                                             modifier = Modifier.padding(horizontal = s.sm, vertical = s.xs)
                                         )
@@ -330,7 +332,9 @@ fun BookmarksAndTocBottomSheet(
                                     Spacer(modifier = Modifier.width(s.md))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = bm.title,
+                                            text = bm.title.ifBlank {
+                                                stringResource(R.string.page_badge_short, bm.pageIndex + 1)
+                                            },
                                             style = MaterialTheme.typography.titleSmall
                                         )
                                         Text(
@@ -520,7 +524,11 @@ fun QuickToolsBottomSheet(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${state.documentTitle}  ·  ${stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1))}",
+                        text = stringResource(
+                            R.string.reader_doc_page_meta,
+                            state.documentTitle.ifBlank { stringResource(R.string.reader_default_title) },
+                            stringResource(R.string.page_of, state.currentPage + 1, state.pageCount.coerceAtLeast(1))
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -600,14 +608,32 @@ fun QuickToolsBottomSheet(
                     onDismiss()
                     onToggleAutoScroll()
                 },
-                ToolGridTile(Icons.Filled.Link, "${stringResource(R.string.reader_links)} (${state.documentLinks.size})", state.documentLinks.isNotEmpty()) {
+                ToolGridTile(
+                    Icons.Filled.Link,
+                    stringResource(
+                        R.string.reader_links_count,
+                        stringResource(R.string.reader_links),
+                        state.documentLinks.size
+                    ),
+                    state.documentLinks.isNotEmpty()
+                ) {
                     onDismiss()
                     onOpenDocumentLinks()
                 },
                 ToolGridTile(Icons.Filled.Policy, stringResource(R.string.incognito_mode), state.incognitoMode) {
                     onToggleIncognito()
                 },
-                ToolGridTile(Icons.Filled.ScreenRotation, stringResource(R.string.reader_rotate), false) {
+                ToolGridTile(
+                    Icons.Filled.ScreenRotation,
+                    stringResource(
+                        if (state.orientationLock == OrientationLock.LOCKED) {
+                            R.string.reader_orientation_locked
+                        } else {
+                            R.string.reader_orientation_lock
+                        }
+                    ),
+                    state.orientationLock == OrientationLock.LOCKED
+                ) {
                     onDismiss()
                     onRotateScreen()
                 },
@@ -655,7 +681,7 @@ fun QuickToolsBottomSheet(
                     FilterChip(
                         selected = state.layoutMode == mode,
                         onClick = { onSelectLayout(mode) },
-                        label = { Text(mode.label) }
+                        label = { Text(stringResource(mode.labelRes)) }
                     )
                 }
             }
@@ -676,7 +702,7 @@ fun QuickToolsBottomSheet(
                     FilterChip(
                         selected = state.pageFitPolicy == policy,
                         onClick = { onSelectFitPolicy(policy) },
-                        label = { Text(policy.label) }
+                        label = { Text(stringResource(policy.labelRes)) }
                     )
                 }
             }
@@ -697,7 +723,7 @@ fun QuickToolsBottomSheet(
                     FilterChip(
                         selected = state.colorMode == colorMode,
                         onClick = { onSelectColorMode(colorMode) },
-                        label = { Text(colorMode.label) }
+                        label = { Text(stringResource(colorMode.labelRes)) }
                     )
                 }
             }
@@ -718,7 +744,7 @@ fun QuickToolsBottomSheet(
                     FilterChip(
                         selected = state.readingStatus == status,
                         onClick = { onSelectStatus(status) },
-                        label = { Text(status.label) }
+                        label = { Text(stringResource(status.labelRes)) }
                     )
                 }
             }
@@ -751,7 +777,7 @@ fun QuickToolsBottomSheet(
             Spacer(modifier = Modifier.height(s.md))
 
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = Alpha.cardSurface),
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -768,8 +794,16 @@ fun QuickToolsBottomSheet(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Spacer(modifier = Modifier.height(s.xxs))
+                        val displayFolder = state.folderName.ifBlank {
+                            stringResource(R.string.default_folder_documents)
+                        }
                         Text(
-                            text = "${state.folderName}  ·  ${formatFileSize(state.fileSizeBytes)}  ·  ${String.format(Locale.US, "%.1fx", state.zoomScale)}",
+                            text = stringResource(
+                                R.string.reader_doc_info_detail,
+                                displayFolder,
+                                formatFileSize(state.fileSizeBytes),
+                                state.zoomScale
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -809,7 +843,7 @@ private fun ToolGridButton(
     val bgColor = if (tile.isActive) {
         MaterialTheme.colorScheme.primaryContainer
     } else {
-        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = Alpha.medium)
     }
     val fgColor = if (tile.isActive) {
         MaterialTheme.colorScheme.onPrimaryContainer

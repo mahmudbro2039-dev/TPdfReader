@@ -1,0 +1,535 @@
+# TASK (PART 2 of 2): Search index (Room FTS4, separate DB) + search all PDFs + OCR (Tesseract)
+
+PART 1 is done: `PdfTextEngine`, `TextSession.pages()`, `TextNormalizer`, `TextQuality` exist.
+If they do not exist, STOP and tell me.
+
+Goal:
+1. Index the text of every PDF once, page by page, in the background, into a SEPARATE
+   Room database that holds only derived data.
+2. Replace the old deep search (PdfTextExtractor, 4 PDFs loaded in memory) and the Reader's
+   in-PDF search with queries on this index.
+3. Let the user run OCR (Tesseract, Bengali + English) on pages that have no usable text.
+
+Work in the exact order below. ONE step at a time. The project must compile after each
+step. Do NOT redesign any screen. Reuse existing components. Do NOT touch navigation routes.
+
+## GLOBAL RULES (read first, obey always)
+1. OPEN and READ every file before editing. Names in my snippets are EXAMPLES. Use the real
+   names from the repo. Never invent APIs. If an API in my snippet differs in the version you
+   resolve, use the real one and mention it in the report.
+2. MAIN Room database: NO entity change, NO version bump, NO new table. The ONLY allowed change
+   there is ONE new read-only `@Query` function in `PdfDao` (Step 6).
+3. The index lives in its OWN Room database file `search_index.db`. It contains derived data
+   only, so `fallbackToDestructiveMigration` is allowed in THIS database and ONLY here. Put this
+   comment above it: `// Derived data. Safe to drop and rebuild. NEVER do this in the main DB.`
+4. User-visible text goes in `strings.xml` (use plurals where a count changes the word).
+   dp/sp/color/shape come from `ui/theme/`. `ThemeGuardTest` must stay green.
+5. New library: ONLY Tesseract4Android in Step 9. Nothing else.
+6. PDFBox and OCR NEVER run on the main thread. Indexing and OCR run in an APP-LEVEL scope
+   (owned by `AppContainer`/`Application`), NOT in a ViewModel scope that dies with a screen.
+7. After every step run `./gradlew assembleDebug`. At the end run
+   `./gradlew assembleDebug testDebugUnitTest assembleDebugAndroidTest lintDebug`.
+   Do not delete code just to make it compile.
+
+---
+
+## STEP 0 — Read and inventory (NO edits). Put answers in the final report
+1. Where is `AppContainer` created (Activity or Application)? Is there an `Application` class?
+2. Every caller of `PdfTextExtractor`: deep search (which ViewModel / composable) and Reader
+   in-PDF search (which ViewModel / composable).
+3. How deep-search results are shown today (composable, entry point, what one result contains).
+   How the Reader's in-PDF search shows results and jumps to a page.
+4. Every place that DELETES a row from the documents table (remove-from-library action, scanner
+   cleanup, anything else).
+5. Room version, is `room-ktx` available (`withTransaction`), and the KSP setup.
+6. The real table name of `PdfDocumentEntity`, and whether it stores file size / modified time.
+7. How `PdfEngine` opens a PDF file descriptor (and whether a helper is reusable).
+8. Which backup XML files the manifest references (`dataExtractionRules`, `fullBackupContent`)
+   and whether those files exist.
+
+---
+
+## STEP 1 — Make sure `AppContainer` lives in an `Application` class
+Why: a container created in the Activity is recreated on rotation. A background indexer would
+then run twice.
+- If `AppContainer` is already created in an `Application` subclass: skip this step.
+- Otherwise: create `TeenaApp : Application()` with `val container: AppContainer by lazy { AppContainer(this) }`,
+  register it with `android:name=".TeenaApp"` in the manifest (match the real package), and make
+  `MainActivity` and all factories read `(application as TeenaApp).container`.
+  Do not change what `AppContainer` contains. Keep everything lazy.
+- `AppContainer` gets one app-level scope:
+  `val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)`.
+
+---
+
+## STEP 2 — `SearchTextNormalizer` (pure Kotlin) + unit tests
+New package `data/search/`. File `SearchTextNormalizer.kt`. No Android imports.
+
+Why: the FTS tokenizer is `simple`: a token is a run of ASCII letters/digits/underscore or any
+char >= 128, and it lowercases ASCII only. So WE must remove punctuation (Bengali danda `।`,
+curly quotes, etc.), joiners and case, otherwise "খাই।" would be a different token from "খাই".
+
+```kotlin
+object SearchTextNormalizer {
+    const val MIN_QUERY_CHARS = 2
+    const val MAX_QUERY_TOKENS = 8
+
+    /** Used for BOTH indexing and querying. Result: lowercase words separated by single spaces. */
+    fun forIndex(raw: String): String {
+        val nfc = java.text.Normalizer.normalize(raw, java.text.Normalizer.Form.NFC)
+        val sb = StringBuilder(nfc.length)
+        var lastWasSpace = true
+        for (ch in nfc) {
+            when {
+                ch == '\u200D' || ch == '\u200C' -> Unit        // drop ZWJ/ZWNJ: keeps the word in one piece
+                ch.isLetterOrDigit() || isMark(ch) -> {
+                    sb.append(ch.lowercaseChar()); lastWasSpace = false
+                }
+                else -> if (!lastWasSpace) { sb.append(' '); lastWasSpace = true }
+            }
+        }
+        return sb.toString().trimEnd()
+    }
+
+    private fun isMark(ch: Char): Boolean {
+        val t = Character.getType(ch)
+        return t == Character.NON_SPACING_MARK.toInt() ||
+            t == Character.COMBINING_SPACING_MARK.toInt() ||
+            t == Character.ENCLOSING_MARK.toInt()
+    }
+
+    /** FTS MATCH string, or null if the input is too short. Last token is a prefix search. */
+    fun buildMatchQuery(userInput: String): String? {
+        val norm = forIndex(userInput)
+        if (norm.length < MIN_QUERY_CHARS) return null
+        val tokens = norm.split(' ').filter { it.isNotEmpty() }.take(MAX_QUERY_TOKENS)
+        if (tokens.isEmpty()) return null
+        return tokens.mapIndexed { i, t -> if (i == tokens.lastIndex) "$t*" else t }.joinToString(" ")
+    }
+}
+```
+Bengali vowel signs, hasanta and anusvara are "marks", so `isMark` is REQUIRED. Do not remove it.
+Tokens can only contain letters/digits/marks, so they can never contain FTS syntax characters.
+
+Also add `PageRowId` (same file or neighbor):
+```kotlin
+object PageRowId {
+    const val PAGES_PER_DOC = 1_000_000L
+    fun of(docId: Long, pageIndex: Int): Long = docId * PAGES_PER_DOC + pageIndex
+    fun docOf(rowId: Long): Long = rowId / PAGES_PER_DOC
+    fun pageOf(rowId: Long): Int = (rowId % PAGES_PER_DOC).toInt()
+    fun firstOf(docId: Long): Long = docId * PAGES_PER_DOC
+    fun lastOf(docId: Long): Long = docId * PAGES_PER_DOC + PAGES_PER_DOC - 1
+}
+```
+
+Unit tests `SearchTextNormalizerTest` (plain JUnit):
+1. `forIndex("আমার সোনার বাংলা, আমি তোমায় ভালোবাসি।")` -> `"আমার সোনার বাংলা আমি তোমায় ভালোবাসি"`.
+2. `forIndex("র\u200D্য")` contains neither `\u200D` nor `\u200C`.
+3. `forIndex("Hello, World!")` -> `"hello world"`.
+4. `forIndex("a_b")` -> `"a b"`.
+5. `forIndex("১২৩ test")` -> `"১২৩ test"` (Bengali digits kept).
+6. `forIndex("\u09C7\u09BE")` equals `forIndex("\u09CB")` (typing variants match).
+7. `forIndex("  \n\t ")` -> `""`.
+8. `buildMatchQuery("সোনার বা")` -> `"সোনার বা*"`.
+9. `buildMatchQuery("a")` -> null; `buildMatchQuery("  ")` -> null; `buildMatchQuery("ab")` -> `"ab*"`.
+10. `buildMatchQuery("a b c d e f g h i j")` has at most 8 tokens.
+11. `buildMatchQuery("foo OR bar")` -> `"foo or bar*"` (lowercase: never an FTS operator).
+12. `buildMatchQuery("\"x\" -y (z)")` contains none of `"`, `-`, `(`, `)`.
+13. `PageRowId`: `of(7, 42)` -> `docOf == 7`, `pageOf == 42`; `firstOf(7) <= of(7, 999_999) <= lastOf(7)`;
+    `lastOf(7) < firstOf(8)`.
+
+---
+
+## STEP 3 — The separate index database
+New files under `data/search/db/`.
+
+```kotlin
+enum class IndexStatus { PENDING, INDEXING, DONE, FAILED, ENCRYPTED }
+
+@Entity(tableName = "indexed_doc", indices = [Index(value = ["uriString"], unique = true)])
+data class IndexedDocEntity(
+    @PrimaryKey(autoGenerate = true) val docId: Long = 0,   // AUTOINCREMENT: ids are never reused
+    val uriString: String,
+    val fingerprint: String,
+    val indexVersion: Int,
+    val pageCount: Int = 0,
+    val nextPage: Int = 0,          // text pass resume pointer (0-based)
+    val textPages: Int = 0,         // pages that currently have a row in the FTS table
+    val status: IndexStatus = IndexStatus.PENDING,
+    val ocrNextPage: Int = 0,       // OCR resume pointer (0-based)
+    val ocrFinished: Boolean = false,
+    val updatedAt: Long = 0L
+)
+
+@Fts4(tokenizer = FtsOptions.TOKENIZER_SIMPLE)
+@Entity(tableName = "page_text_fts")
+data class PageTextFts(
+    @PrimaryKey @ColumnInfo(name = "rowid") val rowId: Long,   // = PageRowId.of(docId, pageIndex)
+    val text: String                                           // already passed through forIndex()
+)
+
+data class RawHit(val rowid: Long, val snippet: String)
+```
+If Room rejects a `Long` rowid for the FTS entity, STOP and report. Do NOT silently switch to Int.
+
+`SearchIndexDao` (adapt to Room syntax):
+- docs: `getDoc(uri)`, `getDocById(id)`, `getAllDocs()`, `observeDocs(): Flow<List<IndexedDocEntity>>`,
+  `observeDoc(uri): Flow<IndexedDocEntity?>`,
+  `@Insert(onConflict = IGNORE) insertDoc(doc): Long`, `@Update updateDoc(doc)`,
+  `@Query("DELETE FROM indexed_doc WHERE docId = :id")`, `@Query("DELETE FROM indexed_doc")`.
+- pages: `@Insert(onConflict = REPLACE) insertPages(pages: List<PageTextFts>)`,
+  `@Query("DELETE FROM page_text_fts WHERE rowid BETWEEN :from AND :to")`,
+  `@Query("DELETE FROM page_text_fts")`,
+  `@Query("SELECT rowid FROM page_text_fts WHERE rowid BETWEEN :from AND :to") suspend fun pageRowIdsInRange(from: Long, to: Long): List<Long>`,
+  `@Query("UPDATE indexed_doc SET textPages = (SELECT COUNT(*) FROM page_text_fts WHERE rowid BETWEEN :from AND :to) WHERE docId = :id") suspend fun recountTextPages(id: Long, from: Long, to: Long)`.
+- progress updates (targeted, never whole-entity copy): `setStatus(id, status, now)`,
+  `setPageCount(id, pageCount, now)`, `setNextPage(id, nextPage, now)`,
+  `setOcrProgress(id, ocrNextPage, ocrFinished, now)`.
+- search:
+```kotlin
+@Query("""
+  SELECT rowid AS rowid,
+         snippet(page_text_fts, :open, :close, :ellipsis, -1, 12) AS snippet
+  FROM page_text_fts WHERE page_text_fts MATCH :match LIMIT :limit
+""")
+suspend fun searchAll(match: String, open: String, close: String, ellipsis: String, limit: Int): List<RawHit>
+
+@Query("""
+  SELECT rowid AS rowid,
+         snippet(page_text_fts, :open, :close, :ellipsis, -1, 12) AS snippet
+  FROM page_text_fts WHERE page_text_fts MATCH :match AND rowid BETWEEN :from AND :to
+  ORDER BY rowid LIMIT :limit
+""")
+suspend fun searchInDoc(match: String, from: Long, to: Long, open: String, close: String, ellipsis: String, limit: Int): List<RawHit>
+```
+Do NOT JOIN the FTS table with anything and do NOT give it an alias (snippet() and MATCH break).
+Doc lookup is done in Kotlin from the docId (`PageRowId.docOf`).
+
+`SearchIndexDatabase` (`@Database(entities = [IndexedDocEntity::class, PageTextFts::class], version = 1, exportSchema = false)`),
+file name constant `SEARCH_INDEX_DB_NAME = "search_index.db"`, with the destructive-fallback comment
+from rule 3. Add it to `AppContainer` as a lazy value.
+
+---
+
+## STEP 4 — `SearchIndexRepository`
+In `data/search/`. It wraps the DAO and `SearchIndexDatabase`. Public API:
+```kotlin
+const val INDEX_VERSION = 1   // bump when SearchTextNormalizer or page rules change => full re-index
+class SearchIndexRepository(private val db: SearchIndexDatabase) {
+    suspend fun getOrCreate(uri: String, fingerprint: String): IndexedDocEntity
+        // new -> insert PENDING. Existing but fingerprint != OR indexVersion != INDEX_VERSION ->
+        // delete its page rows and reset pointers/status to PENDING. Else return as is.
+    suspend fun writeTextBatch(docId: Long, pages: List<Pair<Int, String>>, nextPage: Int)
+        // ONE db.withTransaction: insertPages (skip blank text), setNextPage, recountTextPages
+    suspend fun writeOcrPage(docId: Long, pageIndex: Int, text: String, ocrNextPage: Int)
+    suspend fun setStatus(docId: Long, status: IndexStatus)
+    suspend fun setPageCount(docId: Long, pageCount: Int)
+    suspend fun finishOcr(docId: Long)
+    suspend fun indexedPageSet(docId: Long): Set<Int>          // pages that already have text
+    suspend fun remove(uri: String)                            // doc row + its page rows
+    suspend fun pruneTo(knownUris: Set<String>)                // remove docs whose uri is not in the library
+    suspend fun clearAll()
+    fun observeDoc(uri: String): Flow<IndexedDocEntity?>
+    fun observeAllDocs(): Flow<List<IndexedDocEntity>>
+
+    suspend fun searchAll(userQuery: String, limit: Int = 300): List<IndexHit>
+    suspend fun searchInDocument(uri: String, userQuery: String, limit: Int = 500): List<IndexHit>
+}
+data class IndexHit(val uriString: String, val pageIndex: Int, val snippet: String)
+```
+Rules:
+- `searchAll` / `searchInDocument` build the MATCH string with `SearchTextNormalizer.buildMatchQuery`;
+  null -> return an empty list. They run on `Dispatchers.IO`. They map `rowid -> (docId, page)` with
+  `PageRowId`, then docId -> uri using a docs map loaded from the DAO.
+- Snippet markers are CONTROL characters, because indexed text can never contain them:
+  `const val SNIPPET_OPEN = "\u0001"`, `SNIPPET_CLOSE = "\u0002"`, `SNIPPET_ELLIPSIS = "\u2026"`.
+- Every write of a doc's pages must happen inside `db.withTransaction { }` together with the pointer update,
+  so a killed process never leaves a pointer ahead of the data.
+
+---
+
+## STEP 5 — `SearchIndexer` (background text indexing)
+In `data/search/`. Lives in `AppContainer` (lazy), uses `appScope`.
+
+### 5a. `FileFingerprint`
+```kotlin
+object FileFingerprint {
+    /** "<size>:<lastModified>" or null if the file cannot be read. */
+    fun of(context: Context, uri: Uri): String?
+}
+```
+- `file://` -> `File.length()` and `lastModified()`.
+- `content://` -> `contentResolver.query(uri, null, null, null, null)`; read whichever of
+  `OpenableColumns.SIZE`, `DocumentsContract.Document.COLUMN_LAST_MODIFIED`,
+  `MediaStore.MediaColumns.DATE_MODIFIED` exist (use `getColumnIndex() >= 0`). If size is missing, use
+  `openFileDescriptor(uri, "r")?.use { it.statSize }`. If nothing can be opened, return null.
+Never throw.
+
+### 5b. `IndexPolicy`
+`fun canRunNow(context): PauseReason?` returns null when allowed, else
+`PauseReason.LOW_BATTERY` (battery low AND not charging; read the sticky
+`Intent.ACTION_BATTERY_CHANGED` with `registerReceiver(null, filter)`) or `PauseReason.POWER_SAVER`
+(`PowerManager.isPowerSaveMode`). Constants in one object `IndexConfig`:
+`MAX_PAGES_PER_DOC = 5000`, `BATCH_PAGES = 10`, `START_DELAY_MS = 3000`, `PAUSE_RECHECK_MS = 60_000`.
+
+### 5c. Behavior
+```kotlin
+class SearchIndexer(
+    private val appContext: Context, private val scope: CoroutineScope,
+    private val repo: SearchIndexRepository, private val textEngine: PdfTextEngine,
+    private val libraryCandidates: Flow<List<String>> /* uris, most recently opened first */
+) {
+    val pauseReason: StateFlow<PauseReason?>
+    fun start()                         // idempotent; launches the collector and the worker
+    fun prioritize(uri: String)         // put this uri at the FRONT of the queue (Reader opened it)
+    suspend fun rebuildAll()            // repo.clearAll() then enqueue everything again
+}
+```
+Implementation rules (keep it SIMPLE, do not over-engineer):
+1. Queue = `ArrayDeque<String>` guarded by a `Mutex`, plus `Channel<Unit>(Channel.CONFLATED)` to wake
+   the worker. One worker coroutine on `Dispatchers.Default`, processing ONE document at a time.
+2. `start()`: launch (a) the collector: `delay(START_DELAY_MS)` first (do not slow the app start), then
+   `libraryCandidates.collect { uris -> repo.pruneTo(uris.toSet()); enqueue the ones not DONE yet }`;
+   (b) the worker loop.
+3. Per document:
+   - `fp = FileFingerprint.of(...) ?: return` (unreadable or missing file: skip, no status change).
+   - `doc = repo.getOrCreate(uri, fp)`. If status is DONE, FAILED or ENCRYPTED -> return.
+   - `textEngine.open(uri)`: `Failure(ENCRYPTED)` -> status ENCRYPTED; any other failure -> FAILED; return.
+   - `repo.setPageCount`, status INDEXING.
+   - Collect `session.pages(from = doc.nextPage)` while `pageIndex < min(pageCount, MAX_PAGES_PER_DOC)`.
+     For each page: if `quality == GOOD` keep `pageIndex to SearchTextNormalizer.forIndex(text)`;
+     otherwise keep nothing (EMPTY / GARBLED / LEGACY_BANGLA_FONT / FAILED pages get NO row; they are
+     the OCR candidates later).
+     Every `BATCH_PAGES` pages: `policy check` (see 4), then `repo.writeTextBatch(...)`.
+     Flush the last partial batch. Then status DONE.
+   - Always `session.close()` (use `.use {}`), also on cancellation.
+   - A thrown exception for one document (not CancellationException) -> status FAILED, continue
+     with the next document. One bad PDF must never stop the worker.
+4. Before each batch: `while (policy.canRunNow(ctx) != null) { pauseReason.value = reason; delay(PAUSE_RECHECK_MS) }`,
+   then `pauseReason.value = null`.
+5. `yield()` between batches so the Text Mode requests (same PDFBox thread) are never starved.
+6. `prioritize(uri)`: remove it from the queue if present and `addFirst`. If it is the document being
+   processed right now, do nothing.
+
+---
+
+## STEP 6 — Wiring (library, removal, start, backup rules)
+1. **Main DB, one read-only query** in `PdfDao` (this is NOT a schema change):
+   `@Query("SELECT uriString, lastOpenedAt FROM <real_table>") fun observeIndexCandidates(): Flow<List<IndexCandidateRow>>`
+   Build `libraryCandidates` as:
+   `rows.map { sortedByDescending { lastOpenedAt }.map { uriString } }.distinctUntilChanged { a, b -> a.toSet() == b.toSet() }`.
+   Reason: progress writes on every page turn re-emit this flow; we must ignore them.
+2. Skip documents the app already knows are missing (`isMissing` / `missingUris` from the data-loss
+   task) when enqueueing, if that set is easily accessible. Otherwise `FileFingerprint` returning null
+   already handles it.
+3. **Removal hook:** at EVERY place found in Step 0 item 4 that deletes a document, also call
+   `searchIndex.remove(uri)`. (`pruneTo` is only the safety net.)
+4. **Start:** call `container.searchIndexer.start()` once from the app start (inside `TeenaRoot` in a
+   `LaunchedEffect(Unit)`, or `Application.onCreate` via `appScope.launch`). It must not block the first frame.
+5. **Reader hook:** when the Reader successfully opens a document, call `searchIndexer.prioritize(uri)`
+   (in Incognito too: indexing is not a reading trace).
+6. **Backup rules:** the index must NOT be uploaded to cloud backup.
+   Open the XML files found in Step 0 item 8 (create them if the manifest references a missing one) and add:
+   ```xml
+   <!-- data_extraction_rules.xml: inside BOTH <cloud-backup> and <device-transfer> -->
+   <exclude domain="database" path="search_index.db"/>
+   <exclude domain="database" path="search_index.db-wal"/>
+   <exclude domain="database" path="search_index.db-shm"/>
+   <exclude domain="file" path="tesseract"/>
+   ```
+   and the same `<exclude .../>` lines inside `<full-backup-content>` of the legacy file (API <= 30).
+   Keep any rule that already exists.
+
+---
+
+## STEP 7 — Switch the search screens to the index
+### 7a. Strings (English only, adapt names to repo style)
+`search_inside_pdfs_title` "Inside PDFs", `search_result_page` "Page %1$d", `search_no_results` "No results found.",
+`search_index_incomplete` plurals-or-format "Indexing %1$d of %2$d PDFs. Results may be incomplete.",
+`reader_search_preparing` "Preparing this PDF for search…",
+`reader_search_no_text` "This PDF has no searchable text.",
+`reader_search_partial` "Still indexing. More results may appear.".
+
+### 7b. Deep search (all PDFs)
+Keep the existing entry point and layout (Step 0 item 3). Replace only the data source:
+- ViewModel: `queryFlow.debounce(250).distinctUntilChanged().flatMapLatest { q -> flow { emit(repo.searchAll(q)) } }`,
+  `flowOn(Dispatchers.Default)`. Min length is enforced by `buildMatchQuery` (null -> empty state, not an error).
+- Group hits by `uriString`, keep only uris that exist in the library list, sort groups by library recency.
+  Show at most 3 hits per document in the list with a "+N more" affordance only if the existing UI already
+  has one; otherwise show the first 3 only. Each hit: page label (`search_result_page`) + the snippet.
+- Snippet -> `AnnotatedString`: text between `SNIPPET_OPEN` and `SNIPPET_CLOSE` gets the highlight style
+  (use an EXISTING theme color/`SpanStyle` token, e.g. `primary` + bold; add a theme token only if none exists).
+  Put this parser in a small pure function `parseSnippet(raw): List<Pair<String, Boolean>>` so it can be unit tested.
+- Tap a hit -> open the Reader at that page (use the 0-based/1-based rule from the Part 1 report).
+- Banner (existing text style) when index is incomplete: documents DONE vs documents in the library
+  (`repo.observeAllDocs()` + library count), using `search_index_incomplete`.
+- Empty result and index complete -> `search_no_results`.
+- Delete all code that loaded PDFs into memory for deep search.
+
+### 7c. Reader in-PDF search
+Keep the existing UI. Replace the backend:
+- `repo.searchInDocument(uri, query)` returns pages (and snippets if the UI can show them; if the existing UI
+  only shows page numbers, show page numbers only). Jump to a page works as before. Do NOT promise
+  highlight rectangles on the page image.
+- Observe `repo.observeDoc(uri)`. While `status != DONE`: show `reader_search_preparing` (if no rows yet)
+  or `reader_search_partial`, call `searchIndexer.prioritize(uri)` once, and re-run the current query when
+  `textPages` changes (throttle to 1 per second).
+- If status is DONE and `textPages == 0`: show `reader_search_no_text`.
+- If status is ENCRYPTED or FAILED: show `reader_search_no_text`.
+
+### 7d. Delete the old engine
+When no caller of `PdfTextExtractor` is left: delete the class and its imports/tests, and the
+`@Deprecated` leftovers from Part 1. List what you deleted.
+
+---
+
+## STEP 8 — Settings: index status and rebuild
+Use the existing Settings row/section components. No new design.
+- One row "Search index": subtitle `"%1$d of %2$d PDFs indexed"` (indexed = docs with status DONE; total =
+  library size). If `pauseReason != null`, add a second line: "Paused: low battery" / "Paused: battery saver".
+- One action row "Rebuild index" with a confirm dialog ("Search will be incomplete until indexing finishes.").
+  It calls `searchIndexer.rebuildAll()`.
+- Strings: `settings_search_index_title`, `settings_search_index_status`, `settings_search_index_paused_battery`,
+  `settings_search_index_paused_saver`, `settings_search_index_rebuild`, `settings_search_index_rebuild_confirm`.
+- The Settings ViewModel only observes flows; it never starts heavy work in its own scope.
+
+---
+
+## STEP 9 — OCR (Tesseract), user-triggered, per document
+### 9a. Library and data files
+1. `libs.versions.toml`: add `tesseract4android = "4.7.0"` and
+   `tesseract4android = { module = "cz.adaptech.tesseract4android:tesseract4android", version.ref = "tesseract4android" }`;
+   `implementation(libs.tesseract4android)`. If 4.7.0 does not resolve, use the newest 4.x of the SAME
+   artifact from Maven Central and report it. Do NOT switch to another OCR library.
+2. Language data is NOT in the repo. Create the empty folder `app/src/main/assets/tessdata/` with a `.gitkeep`.
+   I (the human) will add `ben.traineddata` and `eng.traineddata` (from tessdata_fast). NEVER create fake
+   traineddata files. The code MUST work (no crash, clear message) when they are missing.
+3. If R8 is on and OCR fails only in release, add exactly:
+   `-keep class com.googlecode.tesseract.android.** { *; }` and `-keep class com.googlecode.leptonica.android.** { *; }`.
+
+### 9b. `OcrConfig` (one object, all constants)
+`LANGUAGES = "ben+eng"`, `FALLBACK_LANGUAGES = "eng"`, `RENDER_MAX_SIDE_PX = 3000`, `RENDER_MAX_PIXELS = 9_000_000`,
+`MIN_CONFIDENCE = 35` (tunable: pages below it are NOT indexed), `PAGE_BACKGROUND = 0xFFFFFFFF.toInt()`
+(OCR canvas, not a UI color), `DATA_DIR_NAME = "tesseract"`.
+
+### 9c. `OcrDataInstaller`
+`fun ensureInstalled(context): OcrData?`: copies `assets/tessdata/<lang>.traineddata` to
+`filesDir/tesseract/tessdata/` ONLY if the target file does not exist yet. Returns the languages
+actually available (`"ben+eng"`, `"eng"`) or null if none. Runs on IO. Tesseract's `dataPath` is
+`filesDir/tesseract` (the PARENT of `tessdata`).
+
+### 9d. `OcrEngine`
+Wraps Tesseract4Android `TessBaseAPI`. API names may differ slightly in your version; adapt.
+```kotlin
+class OcrEngine(private val appContext: Context) {
+    suspend fun open(): OcrSession?          // null when no language data is installed
+}
+interface OcrSession : Closeable {
+    suspend fun recognize(bitmap: Bitmap): OcrPageResult   // text + meanConfidence
+}
+```
+- `TessBaseAPI().init(dataPath, languages)`; page segmentation mode `PSM_AUTO`; `setImage(bitmap)`;
+  `getUTF8Text()`; `meanConfidence()`; always `recycle()`/`end()` in `close()`.
+- Run on a dedicated `Dispatchers.Default.limitedParallelism(1)`. Tesseract is NOT thread-safe.
+- Result text: `SearchTextNormalizer.forIndex(TextNormalizer.clean(raw))`.
+
+### 9e. `OcrRunner` (app-level, one document at a time)
+```kotlin
+sealed interface OcrState {
+    data object Idle : OcrState
+    data class Running(val uri: String, val page: Int, val total: Int) : OcrState
+    data class Finished(val uri: String, val addedPages: Int) : OcrState
+    data class Failed(val uri: String, val reason: OcrFailure) : OcrState   // NO_DATA, OPEN_FAILED, CANCELLED_LOW_BATTERY, OTHER
+}
+class OcrRunner(...) {
+    val state: StateFlow<OcrState>
+    fun start(uri: String)     // ignored if already running
+    fun stop()
+}
+```
+Algorithm for `start(uri)` (launch in `appScope`):
+1. The doc must exist in the index with status DONE, else do nothing. `OcrEngine.open()` null -> `Failed(NO_DATA)`.
+2. `have = repo.indexedPageSet(docId)`. Open ITS OWN `PdfRenderer` on its own file descriptor (do NOT use the
+   shared renderer of `PdfEngine`; the Reader uses it). If `openFileDescriptor` is not seekable and
+   `PdfRenderer` throws `IOException`, copy to `cacheDir/ocr_tmp/<hash>.pdf` and open that; delete the copy at the end.
+   A password-protected PDF -> `Failed(OPEN_FAILED)`.
+3. For `p in doc.ocrNextPage until doc.pageCount` (cap `IndexConfig.MAX_PAGES_PER_DOC`):
+   - skip pages in `have`;
+   - `ensureActive()`; policy check (`IndexPolicy`), if LOW_BATTERY -> `Failed(CANCELLED_LOW_BATTERY)` and stop
+     (progress is saved, user can resume);
+   - render: open page, scale = `RENDER_MAX_SIDE_PX / max(page.width, page.height)`, size = page size * scale,
+     reduce while `w*h > RENDER_MAX_PIXELS`; `Bitmap.createBitmap(w, h, ARGB_8888)`, `eraseColor(PAGE_BACKGROUND)`
+     (PdfRenderer renders on transparent, OCR needs white), `page.render(bmp, null, null, RENDER_MODE_FOR_PRINT)`;
+     close the page in `finally`; `bmp.recycle()` after OCR. On `OutOfMemoryError`: retry ONCE at half size,
+     then skip the page;
+   - `result = session.recognize(bmp)`; if `result.meanConfidence >= MIN_CONFIDENCE` and text is not blank ->
+     `repo.writeOcrPage(docId, p, text, ocrNextPage = p + 1)`; else just advance the pointer
+     (`setOcrProgress`);
+   - publish `Running(uri, p + 1, total)`.
+4. At the end: `repo.finishOcr(docId)`, `Finished(uri, addedPages)`. Close session and renderer in `finally`.
+5. Cancellation (`stop()` or scope cancel) must close everything and keep the saved pointer.
+
+### 9f. UI (use the existing `DocumentActionsSheet`; no redesign)
+- A new item "Make searchable (OCR)" is shown only when the index doc is DONE and
+  `textPages < pageCount` and `!ocrFinished`. While OCR runs for THIS document the item shows
+  `OCR: page %1$d of %2$d` and its action becomes "Stop OCR". When `Finished`, show a Snackbar
+  `ocr_done_message` (plurals: "%1$d page is now searchable" / "%1$d pages are now searchable").
+- If OCR data is missing, tapping the item shows a Snackbar `ocr_data_missing`
+  ("OCR language data is not installed.").
+- Strings: `action_make_searchable`, `action_stop_ocr`, `ocr_progress`, `ocr_done_message` (plurals),
+  `ocr_data_missing`, `ocr_failed_generic`, `ocr_stopped_low_battery`.
+- Do not add OCR anywhere else. Do not auto-start OCR.
+
+---
+
+## STEP 10 — Tests
+### Unit tests (plain JUnit)
+- `SearchTextNormalizerTest` (Step 2).
+- `SnippetParserTest`: `"a\u0001b\u0002c"` -> `[("a",false),("b",true),("c",false)]`; no markers -> one chunk;
+  unbalanced marker does not crash.
+
+### Instrumented tests (must COMPILE; run if a device/emulator is available)
+`SearchIndexDbTest` with `Room.inMemoryDatabaseBuilder(...)`:
+1. `bengaliPrefixSearch`: insert pages with `forIndex("আমার সোনার বাংলা আমি তোমায় ভালোবাসি।")`.
+   Queries `"সোনার"`, `"সোন"` and `"বাংলা"` each return the page. `"নার"` (middle of a word) returns NOTHING.
+2. `punctuationAndDanda`: page text `"খাই।"` is found by query `"খাই"`.
+3. `englishCaseInsensitive`: `"Hello World"` is found by `"hello wor"`.
+4. `searchInDocIsolated`: two docs with the same word; `searchInDoc` for doc A returns only doc A's pages.
+5. `removeDeletesPages`: after `remove(uri)` no hit is returned any more.
+6. `resumePointer`: write a batch with `nextPage = 10`, reopen the repository, `getDoc().nextPage == 10`.
+7. `reindexOnFingerprintChange`: `getOrCreate` with a new fingerprint wipes pages and resets `nextPage` to 0.
+8. If test 1 fails because of the tokenizer, do NOT weaken the test. Report the exact failure.
+
+`SearchIndexerTest`: build a 3-page PDF with `android.graphics.pdf.PdfDocument` (words `TEENA-ALPHA`,
+`TEENA-BETA`, `TEENA-GAMMA`, one per page), run the indexer logic on it (call the per-document function
+directly, not the whole app), assert `searchInDocument("beta")` returns page index 1 only.
+
+`OcrEngineTest`: render the text `HELLO 123` onto a bitmap, build a one-page PDF with it, run `OcrRunner`
+logic; `assumeTrue(OcrDataInstaller.ensureInstalled(ctx)?.contains("eng") == true)` so it is skipped when the
+data is missing. Assert the indexed page is found by query `"hello"`. Bengali OCR is tested manually by me.
+
+---
+
+## DEFINITION OF DONE (tick every line in your report)
+- [ ] Main DB: no entity change, no version bump (`git diff` on entity files is empty); only one new read-only `@Query` in `PdfDao`.
+- [ ] `search_index.db` is separate, rebuildable, and excluded from backup (all 3 files + `tesseract`).
+- [ ] `AppContainer` lives in an `Application` class; the indexer starts once.
+- [ ] Indexing is background, resumable, one doc at a time, one bad PDF never stops it, pauses on low battery / battery saver, starts 3 s after launch.
+- [ ] Bengali prefix search works; punctuation, danda and ZWJ do not break matching (tests 1-3).
+- [ ] Deep search and Reader search read the index. `PdfTextExtractor` is deleted. No PDF is loaded into memory for search.
+- [ ] Removing a PDF from the library also removes it from the index.
+- [ ] Settings shows "x of y PDFs indexed" and has "Rebuild index".
+- [ ] OCR is manual per document, uses its OWN `PdfRenderer`, saves progress, can be stopped, and survives missing language data without crashing.
+- [ ] No fake `.traineddata` files in the repo.
+- [ ] No hardcoded color/dp/sp/string added; `ThemeGuardTest` passes.
+- [ ] `./gradlew assembleDebug testDebugUnitTest assembleDebugAndroidTest lintDebug` passes.
+
+## FINAL REPORT FORMAT
+1. Changed / new / deleted files.
+2. Step 0 answers.
+3. Exact versions that resolved (Room, Tesseract4Android) and any API that differed from my snippets.
+4. Result of `bengaliPrefixSearch` (tokenizer worked or not).
+5. If you could run the app: time to index a 100-page PDF, and time of a search over all indexed PDFs.
+6. Which tests were run and which only compiled.
+7. Anything you were unsure about (do not hide it).

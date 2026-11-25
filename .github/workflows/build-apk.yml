@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build-apk:
-    name: Build MJ PDF APK
+    name: Build TeenaReader APK
     runs-on: ubuntu-latest
 
     steps:
@@ -64,13 +64,13 @@ jobs:
         run: |
           gradle :app:assembleDebug --no-daemon --stacktrace
           mkdir -p dist
-          cp app/build/outputs/apk/debug/app-debug.apk dist/MJ-PDF-debug.apk
+          cp app/build/outputs/apk/debug/TeenaReader-debug.apk dist/TeenaReader-debug.apk
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: MJ-PDF-debug-apk
-          path: dist/MJ-PDF-debug.apk
+          name: TeenaReader-debug-apk
+          path: dist/TeenaReader-debug.apk
           retention-days: 30
           if-no-files-found: error
 
@@ -85,7 +85,7 @@ jobs:
             trap 'rm -f my-upload-key.jks' EXIT
             echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > my-upload-key.jks
             gradle :app:assembleRelease --no-daemon --stacktrace
-            cp app/build/outputs/apk/release/app-release.apk dist/MJ-PDF-release.apk
+            cp app/build/outputs/apk/release/TeenaReader-release.apk dist/TeenaReader-release.apk
             echo "built=true" >> "$GITHUB_OUTPUT"
           else
             echo "Release signing secrets not configured; skipping release APK."
@@ -96,8 +96,8 @@ jobs:
         if: steps.build_release.outputs.built == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: MJ-PDF-release-apk
-          path: dist/MJ-PDF-release.apk
+          name: TeenaReader-release-apk
+          path: dist/TeenaReader-release.apk
           retention-days: 30
           if-no-files-found: error
 

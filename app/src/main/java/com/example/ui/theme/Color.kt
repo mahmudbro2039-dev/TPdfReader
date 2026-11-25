@@ -6,6 +6,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.compositeOver
+import com.example.data.model.ReadingStatus
 
 internal fun lightScheme(accent: Color) = lightColorScheme(
     primary = accent,
@@ -44,8 +45,6 @@ internal fun darkScheme(accent: Color) = darkColorScheme(
     outline = Color(0xFF3D444D),
     outlineVariant = Color(0xFF282E36)
 )
-
-enum class ReadingStatus { ToRead, Reading, Completed, OnHold }
 
 @Immutable
 data class StatusColors(val bg: Color, val fg: Color)
@@ -91,13 +90,15 @@ class TeenaColors(
     private val toRead: StatusColors,
     private val reading: StatusColors,
     private val completed: StatusColors,
-    private val onHold: StatusColors
+    private val onHold: StatusColors,
+    private val abandoned: StatusColors
 ) {
     fun status(s: ReadingStatus) = when (s) {
-        ReadingStatus.ToRead -> toRead
-        ReadingStatus.Reading -> reading
-        ReadingStatus.Completed -> completed
-        ReadingStatus.OnHold -> onHold
+        ReadingStatus.TO_READ -> toRead
+        ReadingStatus.READING -> reading
+        ReadingStatus.COMPLETED -> completed
+        ReadingStatus.ON_HOLD -> onHold
+        ReadingStatus.ABANDONED -> abandoned
     }
 }
 
@@ -143,6 +144,7 @@ internal fun buildExtras(scheme: ColorScheme, dark: Boolean): TeenaColors {
         toRead = StatusColors(scheme.surfaceVariant, scheme.onSurfaceVariant),
         reading = tone(scheme.primary),
         completed = tone(if (dark) Color(0xFF6FCF97) else Color(0xFF2E7D5B)),
-        onHold = tone(if (dark) Color(0xFFF2B35E) else Color(0xFFB7791F))
+        onHold = tone(if (dark) Color(0xFFF2B35E) else Color(0xFFB7791F)),
+        abandoned = tone(scheme.error)
     )
 }

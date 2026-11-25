@@ -2,6 +2,7 @@ package com.example.data.local
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.example.data.model.ReadingProgress
 import com.example.data.model.ReadingStatus
 
 @Entity(tableName = "pdf_documents")
@@ -22,13 +23,17 @@ data class PdfDocumentEntity(
     val status: ReadingStatus
         get() = ReadingStatus.fromName(readingStatus)
 
+    val hasBeenOpened: Boolean
+        get() = ReadingProgress.hasBeenOpened(lastOpenedAt)
+
     val progressFraction: Float
-        get() = if (pageCount <= 1) {
-            if (pageCount == 1) 1f else 0f
-        } else {
-            ((currentPage + 1).toFloat() / pageCount.toFloat()).coerceIn(0f, 1f)
-        }
+        get() = ReadingProgress.fraction(
+            currentPage = currentPage,
+            pageCount = pageCount,
+            lastOpenedAt = lastOpenedAt,
+            isCompleted = status == ReadingStatus.COMPLETED
+        )
 
     val progressPercent: Int
-        get() = (progressFraction * 100f).toInt().coerceIn(0, 100)
+        get() = ReadingProgress.percent(progressFraction)
 }

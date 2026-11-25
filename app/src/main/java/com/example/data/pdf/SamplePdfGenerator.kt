@@ -1,12 +1,14 @@
 package com.example.data.pdf
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import android.net.Uri
+import androidx.compose.ui.graphics.toArgb
+import com.example.R
+import com.example.ui.theme.ContentColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -28,15 +30,15 @@ data class DocumentLinkEntry(
 
 /**
  * Generates realistic multi-page local PDF documents on first launch across folders
- * so every MJ PDF v3.1 feature (Recent, Library 5 statuses, Folders with breadcrumbs,
+ * so every TeenaReader feature (Recent, Library 5 statuses, Folders with breadcrumbs,
  * Table of Contents, Live Search, Hide Margins, Highlights/Notes, Vector Signatures,
  * Share Quote Cards, and Text Mode) can be experienced immediately.
  */
 object SamplePdfGenerator {
 
-    private const val GUIDE_FILE_NAME = "MJ_PDF_Quick_Guide.pdf"
+    private const val GUIDE_FILE_NAME = "TeenaReader_Quick_Guide.pdf"
     private const val ARCH_FILE_NAME = "Clean_Architecture_Handbook.pdf"
-    const val GUIDE_TITLE = "MJ PDF 3.1 Official Guide"
+    const val GUIDE_TITLE = "TeenaReader Official Guide"
     const val ARCH_TITLE = "Android Architecture & Typography"
 
     private data class GuidePage(
@@ -48,14 +50,14 @@ object SamplePdfGenerator {
 
     private val guidePages = listOf(
         GuidePage(
-            chapter = "CHAPTER 01  •  WELCOME TO MJ PDF 3.1",
+            chapter = "CHAPTER 01  •  WELCOME TO TEENAREADER",
             title = "Clean, Fast & Private PDF Reader",
             bodyParagraphs = listOf(
-                "Welcome to MJ PDF 3.1 — a fast, minimalist, open-source PDF reader and document library manager crafted for zero distractions, zero ads, and complete local privacy.",
+                "Welcome to TeenaReader — a fast, minimalist, offline PDF reader and document library manager crafted for zero distractions, zero ads, and complete local privacy.",
                 "The Home screen is organized into three dedicated tabs: Recent (with your Continue Reading hero card and reading history), Library (with cover grid/list views and 5 reading statuses), and Folders (with directory breadcrumb navigation).",
                 "Tap anywhere in the center of a page to enter True Edge-to-Edge Full-Screen Mode. All toolbars vanish smoothly so your document occupies 100% of the display."
             ),
-            tipBox = "Quick Link: Visit https://gitlab.com/mudlej_android/mj_pdf_reader or https://mjpdf.site for official project documentation."
+            tipBox = "Quick Tip: Open Settings from the top menu anytime to customize app themes, default reading modes, and full-screen shortcuts."
         ),
         GuidePage(
             chapter = "CHAPTER 02  •  EVERY TOOL, ONE TAP AWAY",
@@ -82,7 +84,7 @@ object SamplePdfGenerator {
             chapter = "CHAPTER 04  •  ANNOTATIONS & SIGNATURES",
             title = "My Highlights, Notes, Vector Signatures & Share Quote",
             bodyParagraphs = listOf(
-                "MJ PDF 3.1 includes a complete annotation suite:",
+                "TeenaReader includes a complete annotation suite:",
                 "• Multi-Color Highlights & Notes: Save key passages with 5 vibrant color swatches (Yellow, Green, Blue, Pink, Orange) and attach personal study notes.",
                 "• Handwritten Vector Signatures: Draw your signature on a smooth vector pad and stamp it directly onto any page.",
                 "• Share Quote Cards: Turn any memorable passage into a high-resolution, styled quote card image in Paper Light, Obsidian Dark, Warm Sepia, or Dracula Purple themes."
@@ -106,7 +108,7 @@ object SamplePdfGenerator {
             title = "Designing High-Contrast Reading Interfaces",
             bodyParagraphs = listOf(
                 "Great reading software disappears behind the content. By pairing geometric sans-serif UI labels (Plus Jakarta Sans) with high-legibility editorial serif prose (Newsreader), visual fatigue is dramatically reduced.",
-                "Warm archival paper backgrounds (#F8F7F4) eliminate harsh digital glare in daylight, while obsidian charcoal (#0F0F12) and AMOLED black preserve night vision."
+                "Warm archival paper backgrounds eliminate harsh digital glare in daylight, while obsidian charcoal and AMOLED black preserve night vision."
             ),
             tipBox = "Reference: https://material.io/design/typography for modern type scale guidelines."
         ),
@@ -134,7 +136,7 @@ object SamplePdfGenerator {
         val dir = File(context.filesDir, "Guides & Manuals").apply { if (!exists()) mkdirs() }
         val target = File(dir, GUIDE_FILE_NAME)
         if (!target.exists() || target.length() <= 1024L) {
-            writePdfPages(target, guidePages, "MJ PDF 3.1  •  Official Manual")
+            writePdfPages(context, target, guidePages, "TeenaReader  •  Official Manual")
         }
         target
     }
@@ -143,54 +145,59 @@ object SamplePdfGenerator {
         val dir = File(context.filesDir, "Books & Research").apply { if (!exists()) mkdirs() }
         val target = File(dir, ARCH_FILE_NAME)
         if (!target.exists() || target.length() <= 1024L) {
-            writePdfPages(target, architecturePages, "MJ PDF 3.1  •  Books & Research")
+            writePdfPages(context, target, architecturePages, "TeenaReader  •  Books & Research")
         }
         target
     }
 
-    private fun writePdfPages(target: File, pages: List<GuidePage>, footerLabel: String) {
+    private fun writePdfPages(
+        context: Context,
+        target: File,
+        pages: List<GuidePage>,
+        footerLabel: String
+    ) {
         val document = PdfDocument()
         val pageWidth = 595
         val pageHeight = 842
         val marginX = 52f
         val contentWidth = pageWidth - marginX * 2
 
-        val crimsonPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#B91C1C")
+        val accentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ContentColors.sampleGuideAccent.toArgb()
             style = Paint.Style.FILL
         }
         val chapterPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#B91C1C")
+            color = ContentColors.sampleGuideAccent.toArgb()
             textSize = 10.5f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             letterSpacing = 0.08f
         }
         val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#18181B")
+            color = ContentColors.sampleGuideHeading.toArgb()
             textSize = 23f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
         val bodyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#27272A")
+            color = ContentColors.sampleGuideBody.toArgb()
             textSize = 13.5f
             typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL)
         }
         val tipBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#FEE2E2")
+            color = ContentColors.sampleGuideTipBg.toArgb()
             style = Paint.Style.FILL
         }
         val tipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#7F1D1D")
+            color = ContentColors.sampleGuideTipText.toArgb()
             textSize = 11.8f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
         val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#71717A")
+            color = ContentColors.sampleGuideMuted.toArgb()
             textSize = 10.5f
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
         }
         val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.parseColor("#E4E2DD")
+            color = ContentColors.sampleGuideDivider.toArgb()
             strokeWidth = 1f
         }
 
@@ -200,8 +207,8 @@ object SamplePdfGenerator {
                 val page = document.startPage(pageInfo)
                 val canvas = page.canvas
 
-                canvas.drawColor(Color.WHITE)
-                canvas.drawRect(0f, 0f, pageWidth.toFloat(), 9f, crimsonPaint)
+                canvas.drawColor(ContentColors.pagePaper.toArgb())
+                canvas.drawRect(0f, 0f, pageWidth.toFloat(), 9f, accentPaint)
 
                 var y = 72f
                 canvas.drawText(spec.chapter, marginX, y, chapterPaint)
@@ -222,7 +229,7 @@ object SamplePdfGenerator {
                 val tipHeight = 32f + tipLines.size * 18f
                 val tipRect = RectF(marginX, tipTop, pageWidth - marginX, tipTop + tipHeight)
                 canvas.drawRoundRect(tipRect, 10f, 10f, tipBgPaint)
-                canvas.drawRect(marginX, tipTop + 8f, marginX + 4f, tipTop + tipHeight - 8f, crimsonPaint)
+                canvas.drawRect(marginX, tipTop + 8f, marginX + 4f, tipTop + tipHeight - 8f, accentPaint)
 
                 var tipY = tipTop + 25f
                 tipLines.forEach { line ->
@@ -232,7 +239,7 @@ object SamplePdfGenerator {
 
                 canvas.drawLine(marginX, pageHeight - 54f, pageWidth - marginX, pageHeight - 54f, dividerPaint)
                 canvas.drawText(footerLabel, marginX, pageHeight - 34f, footerPaint)
-                val pageLabel = "Page ${index + 1} of ${pages.size}"
+                val pageLabel = context.getString(R.string.page_of, index + 1, pages.size)
                 val labelWidth = footerPaint.measureText(pageLabel)
                 canvas.drawText(pageLabel, pageWidth - marginX - labelWidth, pageHeight - 34f, footerPaint)
 
@@ -244,27 +251,6 @@ object SamplePdfGenerator {
             }
         } finally {
             document.close()
-        }
-    }
-
-    fun getCompanionTextForUri(context: Context, uriString: String): List<String>? {
-        val pages = when {
-            uriString.endsWith(GUIDE_FILE_NAME) -> guidePages
-            uriString.endsWith(ARCH_FILE_NAME) -> architecturePages
-            else -> return null
-        }
-
-        return pages.map { page ->
-            buildString {
-                appendLine(page.chapter)
-                appendLine(page.title)
-                appendLine()
-                page.bodyParagraphs.forEach { para ->
-                    appendLine(para)
-                    appendLine()
-                }
-                append(page.tipBox)
-            }.trim()
         }
     }
 

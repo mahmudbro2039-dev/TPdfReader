@@ -34,11 +34,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -51,19 +54,46 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import com.example.R
 import com.example.data.local.AnnotationEntity
 import com.example.data.model.AnnotationType
 import com.example.data.model.PageFitPolicy
 import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.PdfPageDimension
+import com.example.ui.reader.CurrentPagePicker
+import com.example.ui.reader.PageSpan
+import com.example.ui.reader.UnzoomedPageRect
+import com.example.ui.reader.ZoomRegion
+import com.example.ui.reader.ZoomRegionRequest
+import com.example.ui.theme.Alpha
+import com.example.ui.theme.ReaderZoomTokens
 import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.ReaderUiState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
+
+private data class SharpTriggerSnapshot(
+    val zoomScale: Float,
+    val panX: Float,
+    val panY: Float,
+    val currentPage: Int,
+    val viewportWidth: Float,
+    val viewportHeight: Float,
+    val pages: List<UnzoomedPageRect>
+)
+
+private data class RenderedSharpTile(
+    val region: ZoomRegionRequest,
+    val bitmap: Bitmap
+)
 
 @Composable
 fun PdfDocumentViewport(
@@ -74,7 +104,10 @@ fun PdfDocumentViewport(
     canvasColor: Color,
     peekPage: (pageIndex: Int, targetWidthPx: Int) -> Bitmap? = { _, _ -> null },
     renderPage: suspend (pageIndex: Int, targetWidthPx: Int) -> Bitmap?,
+    renderRegion: suspend (pageIndex: Int, zoomedPageWidthPx: Int, left: Int, top: Int, outWidth: Int, outHeight: Int) -> Bitmap? = { _, _, _, _, _, _ -> null },
     onPageChanged: (Int) -> Unit,
+    onPageIndicatorChanged: (Int) -> Unit = onPageChanged,
+    onPageSettled: (Int) -> Unit = onPageChanged,
     onPendingScrollConsumed: () -> Unit,
     onZoomChange: (Float) -> Unit,
     onToggleChrome: () -> Unit,
@@ -129,7 +162,8 @@ fun PdfDocumentViewport(
             .pointerInput(state.isZoomLocked, state.zoomScale, state.layoutMode) {
                 detectTransformGestures { _, pan, zoom, _ ->
                     if (!state.isZoomLocked && kotlin.math.abs(zoom - 1f) > 0.01f) {
-                        val updatedZoom = (state.zoomScale * zoom).coerceIn(1f, 4f)
+                        val updatedZoom = (state.zoomScale * zoom)
+                            .coerceIn(ReaderZoomTokens.ZoomMin, ReaderZoomTokens.ZoomMax)
                         onZoomChange(updatedZoom)
                     }
                     if (state.zoomScale > 1.02f) {
@@ -147,7 +181,77 @@ fun PdfDocumentViewport(
             }
     ) {
         val density = LocalDensity.current
-        val viewportWidthPx = with(density) { maxWidth.toPx().toInt().coerceAtLeast(360) }
+        val viewportWidthFloat = with(density) { maxWidth.toPx() }
+        val viewportHeightFloat = with(density) { maxHeight.toPx() }
+        val viewportWidthPx = viewportWidthFloat.toInt().coerceAtLeast(360)
+
+        val visiblePageBounds = remember(state.uriString, state.layoutMode, state.pageFitPolicy, state.hideMargins) {
+            mutableStateMapOf<Int, UnzoomedPageRect>()
+        }
+        var zoomContentCoords by remember(state.uriString, state.layoutMode) {
+            mutableStateOf<LayoutCoordinates?>(null)
+        }
+        var sharpTiles by remember(state.uriString, state.layoutMode, state.pageFitPolicy, state.hideMargins) {
+            mutableStateOf<List<RenderedSharpTile>>(emptyList())
+        }
+
+        val currentZoomState = rememberUpdatedState(state.zoomScale)
+        val currentPageState = rememberUpdatedState(state.currentPage)
+        val currentViewportWState = rememberUpdatedState(viewportWidthFloat)
+        val currentViewportHState = rememberUpdatedState(viewportHeightFloat)
+        val currentRenderRegion by rememberUpdatedState(renderRegion)
+
+        LaunchedEffect(state.uriString, state.layoutMode, state.pageFitPolicy, state.hideMargins) {
+            snapshotFlow {
+                SharpTriggerSnapshot(
+                    zoomScale = currentZoomState.value,
+                    panX = panOffset.x,
+                    panY = panOffset.y,
+                    currentPage = currentPageState.value,
+                    viewportWidth = currentViewportWState.value,
+                    viewportHeight = currentViewportHState.value,
+                    pages = visiblePageBounds.values.toList()
+                )
+            }.collectLatest { snap ->
+                sharpTiles = emptyList()
+                if (state.hideMargins ||
+                    snap.zoomScale <= ReaderZoomTokens.SharpThreshold ||
+                    snap.pages.isEmpty()
+                ) {
+                    return@collectLatest
+                }
+
+                delay(ReaderZoomTokens.SharpSettleMs)
+
+                val requests = ZoomRegion.pickTopRegions(
+                    pages = snap.pages,
+                    viewportWidth = snap.viewportWidth,
+                    viewportHeight = snap.viewportHeight,
+                    zoomScale = snap.zoomScale,
+                    panX = snap.panX,
+                    panY = snap.panY,
+                    sharpThreshold = ReaderZoomTokens.SharpThreshold,
+                    maxPages = ReaderZoomTokens.MaxSharpPages
+                )
+                if (requests.isEmpty()) return@collectLatest
+
+                val rendered = ArrayList<RenderedSharpTile>(requests.size)
+                for (req in requests) {
+                    val bmp = currentRenderRegion(
+                        req.pageIndex,
+                        req.zoomedPageWidthPx,
+                        req.left,
+                        req.top,
+                        req.width,
+                        req.height
+                    )
+                    if (bmp != null && !bmp.isRecycled) {
+                        rendered.add(RenderedSharpTile(region = req, bitmap = bmp))
+                    }
+                }
+                sharpTiles = rendered
+            }
+        }
 
         val zoomModifier = Modifier
             .fillMaxSize()
@@ -160,53 +264,104 @@ fun PdfDocumentViewport(
 
         if (state.pageCount <= 0) return@BoxWithConstraints
 
+        val onReportPageBounds: (Int, UnzoomedPageRect) -> Unit = remember(visiblePageBounds) {
+            { pageIdx, rect ->
+                if (visiblePageBounds[pageIdx] != rect) {
+                    visiblePageBounds[pageIdx] = rect
+                }
+            }
+        }
+        val onDisposePageBounds: (Int) -> Unit = remember(visiblePageBounds) {
+            { pageIdx ->
+                visiblePageBounds.remove(pageIdx)
+            }
+        }
+
         key(state.uriString) {
-            when (state.layoutMode) {
-                ScrollLayoutMode.VERTICAL -> {
-                    VerticalPdfViewer(
-                        state = state,
-                        pageGapSpacing = pageGapSpacing,
-                        renderQuality = renderQuality,
-                        viewportWidthPx = viewportWidthPx,
-                        colorFilter = colorFilter,
-                        peekPage = peekPage,
-                        renderPage = renderPage,
-                        onPageChanged = onPageChanged,
-                        onPendingScrollConsumed = onPendingScrollConsumed,
-                        onStopAutoScroll = onStopAutoScroll,
-                        modifier = zoomModifier
-                    )
-                }
+            Box(modifier = zoomModifier) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .onGloballyPositioned { zoomContentCoords = it }
+                ) {
+                    when (state.layoutMode) {
+                        ScrollLayoutMode.VERTICAL -> {
+                            VerticalPdfViewer(
+                                state = state,
+                                pageGapSpacing = pageGapSpacing,
+                                renderQuality = renderQuality,
+                                viewportWidthPx = viewportWidthPx,
+                                colorFilter = colorFilter,
+                                zoomContentCoords = zoomContentCoords,
+                                peekPage = peekPage,
+                                renderPage = renderPage,
+                                onPageChanged = onPageChanged,
+                                onPendingScrollConsumed = onPendingScrollConsumed,
+                                onStopAutoScroll = onStopAutoScroll,
+                                onReportPageBounds = onReportPageBounds,
+                                onDisposePageBounds = onDisposePageBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
 
-                ScrollLayoutMode.HORIZONTAL, ScrollLayoutMode.SINGLE_PAGE -> {
-                    HorizontalPdfViewer(
-                        state = state,
-                        renderQuality = renderQuality,
-                        viewportWidthPx = viewportWidthPx,
-                        colorFilter = colorFilter,
-                        peekPage = peekPage,
-                        renderPage = renderPage,
-                        onPageChanged = onPageChanged,
-                        onPendingScrollConsumed = onPendingScrollConsumed,
-                        onStopAutoScroll = onStopAutoScroll,
-                        modifier = zoomModifier
-                    )
-                }
+                        ScrollLayoutMode.HORIZONTAL, ScrollLayoutMode.SINGLE_PAGE -> {
+                            HorizontalPdfViewer(
+                                state = state,
+                                renderQuality = renderQuality,
+                                viewportWidthPx = viewportWidthPx,
+                                colorFilter = colorFilter,
+                                zoomContentCoords = zoomContentCoords,
+                                peekPage = peekPage,
+                                renderPage = renderPage,
+                                onPageIndicatorChanged = onPageIndicatorChanged,
+                                onPageSettled = onPageSettled,
+                                onPendingScrollConsumed = onPendingScrollConsumed,
+                                onStopAutoScroll = onStopAutoScroll,
+                                onReportPageBounds = onReportPageBounds,
+                                onDisposePageBounds = onDisposePageBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
 
-                ScrollLayoutMode.DUAL_PAGE -> {
-                    DualPagePdfViewer(
-                        state = state,
-                        renderQuality = renderQuality,
-                        viewportWidthPx = (viewportWidthPx / 2).coerceAtLeast(360),
-                        colorFilter = colorFilter,
-                        peekPage = peekPage,
-                        renderPage = renderPage,
-                        onPageChanged = onPageChanged,
-                        onPendingScrollConsumed = onPendingScrollConsumed,
-                        onStopAutoScroll = onStopAutoScroll,
-                        modifier = zoomModifier
-                    )
+                        ScrollLayoutMode.DUAL_PAGE -> {
+                            DualPagePdfViewer(
+                                state = state,
+                                renderQuality = renderQuality,
+                                viewportWidthPx = (viewportWidthPx / 2).coerceAtLeast(360),
+                                colorFilter = colorFilter,
+                                zoomContentCoords = zoomContentCoords,
+                                peekPage = peekPage,
+                                renderPage = renderPage,
+                                onPageIndicatorChanged = onPageIndicatorChanged,
+                                onPageSettled = onPageSettled,
+                                onPendingScrollConsumed = onPendingScrollConsumed,
+                                onStopAutoScroll = onStopAutoScroll,
+                                onReportPageBounds = onReportPageBounds,
+                                onDisposePageBounds = onDisposePageBounds,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
                 }
+            }
+        }
+
+        sharpTiles.forEach { tile ->
+            if (!tile.bitmap.isRecycled) {
+                val widthDp = with(density) { tile.region.overlayWidthPx.toDp() }
+                val heightDp = with(density) { tile.region.overlayHeightPx.toDp() }
+                Image(
+                    bitmap = tile.bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    colorFilter = colorFilter,
+                    modifier = Modifier
+                        .graphicsLayer {
+                            translationX = tile.region.overlayLeftPx
+                            translationY = tile.region.overlayTopPx
+                        }
+                        .size(width = widthDp, height = heightDp)
+                )
             }
         }
     }
@@ -219,11 +374,14 @@ private fun VerticalPdfViewer(
     renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    zoomContentCoords: LayoutCoordinates?,
     peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
     onPageChanged: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
     onStopAutoScroll: () -> Unit,
+    onReportPageBounds: (Int, UnzoomedPageRect) -> Unit,
+    onDisposePageBounds: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val s = TeenaTheme.spacing
@@ -237,11 +395,28 @@ private fun VerticalPdfViewer(
         onPendingScrollConsumed()
     }
 
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.firstVisibleItemIndex }
+    LaunchedEffect(listState, state.pageCount) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val spans = info.visibleItemsInfo.map { item ->
+                PageSpan(
+                    index = item.index,
+                    start = item.offset,
+                    end = item.offset + item.size
+                )
+            }
+            CurrentPagePicker.pick(
+                spans = spans,
+                viewportStart = info.viewportStartOffset,
+                viewportEnd = info.viewportEndOffset,
+                totalPages = state.pageCount
+            )
+        }
             .distinctUntilChanged()
-            .collect { visibleIndex ->
-                onPageChanged(visibleIndex)
+            .collect { pickedPage ->
+                if (pickedPage != null) {
+                    onPageChanged(pickedPage)
+                }
             }
     }
 
@@ -254,7 +429,7 @@ private fun VerticalPdfViewer(
                 onStopAutoScroll()
                 break
             }
-            delay(16L)
+            delay(AUTO_SCROLL_FRAME_MS)
         }
     }
 
@@ -302,8 +477,11 @@ private fun VerticalPdfViewer(
                 pageAnnotations = pageAnnotations,
                 targetWidthPx = effectiveTargetWidthPx,
                 colorFilter = colorFilter,
+                zoomContentCoords = zoomContentCoords,
                 peekPage = peekPage,
                 renderPage = renderPage,
+                onReportBounds = onReportPageBounds,
+                onDisposeBounds = onDisposePageBounds,
                 modifier = when (state.pageFitPolicy) {
                     PageFitPolicy.FIT_WIDTH -> Modifier.fillMaxWidth()
                     PageFitPolicy.FIT_HEIGHT -> Modifier.fillMaxWidth(0.9f)
@@ -320,11 +498,15 @@ private fun HorizontalPdfViewer(
     renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    zoomContentCoords: LayoutCoordinates?,
     peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
-    onPageChanged: (Int) -> Unit,
+    onPageIndicatorChanged: (Int) -> Unit,
+    onPageSettled: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
     onStopAutoScroll: () -> Unit,
+    onReportPageBounds: (Int, UnzoomedPageRect) -> Unit,
+    onDisposePageBounds: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val s = TeenaTheme.spacing
@@ -344,7 +526,13 @@ private fun HorizontalPdfViewer(
     LaunchedEffect(pagerState) {
         snapshotFlow { pagerState.currentPage }
             .distinctUntilChanged()
-            .collect { page -> onPageChanged(page) }
+            .collect { page -> onPageIndicatorChanged(page) }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { settled -> onPageSettled(settled) }
     }
 
     LaunchedEffect(state.isAutoScrollActive, state.autoScrollSpeed) {
@@ -400,8 +588,11 @@ private fun HorizontalPdfViewer(
                 pageAnnotations = pageAnnotations,
                 targetWidthPx = viewportWidthPx,
                 colorFilter = colorFilter,
+                zoomContentCoords = zoomContentCoords,
                 peekPage = peekPage,
                 renderPage = renderPage,
+                onReportBounds = onReportPageBounds,
+                onDisposeBounds = onDisposePageBounds,
                 modifier = when (state.pageFitPolicy) {
                     PageFitPolicy.FIT_WIDTH -> Modifier.fillMaxWidth()
                     PageFitPolicy.FIT_HEIGHT -> Modifier.fillMaxHeight()
@@ -418,11 +609,15 @@ private fun DualPagePdfViewer(
     renderQuality: RenderQuality,
     viewportWidthPx: Int,
     colorFilter: ColorFilter?,
+    zoomContentCoords: LayoutCoordinates?,
     peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
-    onPageChanged: (Int) -> Unit,
+    onPageIndicatorChanged: (Int) -> Unit,
+    onPageSettled: (Int) -> Unit,
     onPendingScrollConsumed: () -> Unit,
     onStopAutoScroll: () -> Unit,
+    onReportPageBounds: (Int, UnzoomedPageRect) -> Unit,
+    onDisposePageBounds: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val s = TeenaTheme.spacing
@@ -445,7 +640,15 @@ private fun DualPagePdfViewer(
         snapshotFlow { pagerState.currentPage }
             .distinctUntilChanged()
             .collect { spreadIndex ->
-                onPageChanged((spreadIndex * 2).coerceIn(0, (state.pageCount - 1).coerceAtLeast(0)))
+                onPageIndicatorChanged((spreadIndex * 2).coerceIn(0, (state.pageCount - 1).coerceAtLeast(0)))
+            }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow { pagerState.settledPage }
+            .distinctUntilChanged()
+            .collect { spreadIndex ->
+                onPageSettled((spreadIndex * 2).coerceIn(0, (state.pageCount - 1).coerceAtLeast(0)))
             }
     }
 
@@ -503,8 +706,11 @@ private fun DualPagePdfViewer(
                     pageAnnotations = annotationsByPage[leftPage].orEmpty(),
                     targetWidthPx = viewportWidthPx,
                     colorFilter = colorFilter,
+                    zoomContentCoords = zoomContentCoords,
                     peekPage = peekPage,
                     renderPage = renderPage,
+                    onReportBounds = onReportPageBounds,
+                    onDisposeBounds = onDisposePageBounds,
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -524,8 +730,11 @@ private fun DualPagePdfViewer(
                     pageAnnotations = annotationsByPage[rightPage].orEmpty(),
                     targetWidthPx = viewportWidthPx,
                     colorFilter = colorFilter,
+                    zoomContentCoords = zoomContentCoords,
                     peekPage = peekPage,
                     renderPage = renderPage,
+                    onReportBounds = onReportPageBounds,
+                    onDisposeBounds = onDisposePageBounds,
                     modifier = Modifier.weight(1f)
                 )
             } else {
@@ -547,8 +756,11 @@ private fun PdfPageSurface(
     pageAnnotations: List<AnnotationEntity>,
     targetWidthPx: Int,
     colorFilter: ColorFilter?,
+    zoomContentCoords: LayoutCoordinates?,
     peekPage: (Int, Int) -> Bitmap?,
     renderPage: suspend (Int, Int) -> Bitmap?,
+    onReportBounds: (Int, UnzoomedPageRect) -> Unit,
+    onDisposeBounds: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val s = TeenaTheme.spacing
@@ -579,10 +791,16 @@ private fun PdfPageSurface(
 
     LaunchedEffect(uriString, pageIndex, bitmap == null) {
         if (bitmap == null) {
-            delay(180L)
+            delay(SPINNER_REVEAL_DELAY_MS)
             showPageSpinner = true
         } else {
             showPageSpinner = false
+        }
+    }
+
+    DisposableEffect(uriString, pageIndex) {
+        onDispose {
+            onDisposeBounds(pageIndex)
         }
     }
 
@@ -601,13 +819,29 @@ private fun PdfPageSurface(
     Surface(
         color = readerColors.pagePaper,
         shadowElevation = sz.cardElevation,
-        modifier = modifier.aspectRatio(dynamicAspectRatio)
+        modifier = modifier
+            .aspectRatio(dynamicAspectRatio)
+            .onGloballyPositioned { pageCoords ->
+                val root = zoomContentCoords ?: return@onGloballyPositioned
+                if (!root.isAttached || !pageCoords.isAttached) return@onGloballyPositioned
+                val rect = root.localBoundingBoxOf(pageCoords, clipBounds = false)
+                val fitted = ZoomRegion.fittedContentRect(
+                    pageIndex = pageIndex,
+                    boxLeft = rect.left,
+                    boxTop = rect.top,
+                    boxWidth = rect.width,
+                    boxHeight = rect.height,
+                    pageAspectRatio = dynamicAspectRatio,
+                    fillWidth = fitPolicy == PageFitPolicy.FIT_WIDTH
+                )
+                onReportBounds(pageIndex, fitted)
+            }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (rendered != null && !rendered.isRecycled) {
                 Image(
                     bitmap = rendered.asImageBitmap(),
-                    contentDescription = "PDF Page ${pageIndex + 1}",
+                    contentDescription = stringResource(R.string.reader_page_content_desc, pageIndex + 1),
                     contentScale = contentScale,
                     colorFilter = colorFilter,
                     modifier = Modifier.fillMaxSize()
@@ -624,7 +858,7 @@ private fun PdfPageSurface(
             if (isBookmarked) {
                 Icon(
                     imageVector = Icons.Filled.Bookmark,
-                    contentDescription = "Bookmarked Page",
+                    contentDescription = stringResource(R.string.reader_bookmarked_page_desc),
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -650,7 +884,7 @@ private fun PdfPageSurface(
                     highlightsAndNotes.take(2).forEach { ann ->
                         val swatch = parseHexColor(ann.colorHex, readerColors.highlightDefault)
                         Surface(
-                            color = swatch.copy(alpha = 0.9f),
+                            color = swatch.copy(alpha = Alpha.high),
                             shape = MaterialTheme.shapes.extraSmall,
                             shadowElevation = sz.hairline
                         ) {
@@ -671,14 +905,14 @@ private fun PdfPageSurface(
             if (signatures.isNotEmpty()) {
                 val latestSig = signatures.first()
                 Surface(
-                    color = readerColors.pagePaper.copy(alpha = 0.88f),
+                    color = readerColors.pagePaper.copy(alpha = Alpha.stampSurface),
                     shape = MaterialTheme.shapes.small,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(s.lg)
                         .border(
                             width = sz.hairline,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = Alpha.borderMuted),
                             shape = MaterialTheme.shapes.small
                         )
                 ) {
@@ -696,7 +930,9 @@ private fun PdfPageSurface(
                         )
                         Spacer(modifier = Modifier.height(s.xxs))
                         Text(
-                            text = latestSig.quotedText.take(22),
+                            text = latestSig.quotedText.ifBlank {
+                                stringResource(R.string.reader_signature_signed)
+                            }.take(22),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -712,7 +948,7 @@ private fun ColumnPagePlaceholder(pageNumber: Int) {
     Box(contentAlignment = Alignment.Center) {
         CircularProgressIndicator(strokeWidth = TeenaTheme.sizes.borderThick)
         Text(
-            text = "$pageNumber",
+            text = pageNumber.toString(),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

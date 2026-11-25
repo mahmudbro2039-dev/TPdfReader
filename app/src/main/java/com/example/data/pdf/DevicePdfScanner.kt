@@ -6,8 +6,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import com.example.R
 import com.example.data.local.PdfDao
 import com.example.data.local.PdfDocumentEntity
+import com.example.data.model.FolderKey
 import com.example.data.model.ReadingStatus
 import com.example.data.system.DevicePermissionsHelper
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +74,7 @@ class DevicePdfScanner(
 
             val totalDiscoveredCounter = AtomicInteger(0)
             val totalInsertedCounter = AtomicInteger(0)
+            val legacyFolderUpgrades = Collections.synchronizedList(ArrayList<Triple<String, String, String>>())
             val now = System.currentTimeMillis()
 
             // Phase 1: Instant indexed MediaStore query (fast metadata batch)
@@ -80,6 +83,7 @@ class DevicePdfScanner(
                     knownUris = knownUris,
                     knownCanonicalPaths = knownCanonicalPaths,
                     discoveredCounter = totalDiscoveredCounter,
+                    legacyFolderUpgrades = legacyFolderUpgrades,
                     nowMs = now
                 )
                 if (mediaStoreDocs.isNotEmpty()) {
@@ -104,8 +108,13 @@ class DevicePdfScanner(
                     knownCanonicalPaths = knownCanonicalPaths,
                     discoveredCounter = totalDiscoveredCounter,
                     insertedCounter = totalInsertedCounter,
+                    legacyFolderUpgrades = legacyFolderUpgrades,
                     nowMs = now
                 )
+            }
+
+            if (legacyFolderUpgrades.isNotEmpty()) {
+                pdfDao.upgradeLegacyFolders(legacyFolderUpgrades.toList())
             }
 
             val finalState = PdfScanProgress(
@@ -127,6 +136,7 @@ class DevicePdfScanner(
         knownUris: MutableSet<String>,
         knownCanonicalPaths: MutableSet<String>,
         discoveredCounter: AtomicInteger,
+        legacyFolderUpgrades: MutableList<Triple<String, String, String>>,
         nowMs: Long
     ): List<PdfDocumentEntity> {
         val discovered = ArrayList<PdfDocumentEntity>(64)
@@ -197,10 +207,20 @@ class DevicePdfScanner(
                         rawPath
                     }
 
+                    val folderKey = extractFolderName(
+                        file = file,
+                        relativePath = relPath
+                    )
                     discoveredCounter.incrementAndGet()
                     val alreadyTracked = knownUris.contains(uriString) ||
                         (canonicalPath.isNotBlank() && knownCanonicalPaths.contains(canonicalPath))
-                    if (alreadyTracked) continue
+                    if (alreadyTracked) {
+                        val leaf = file?.parentFile?.name?.trim().orEmpty()
+                        if (leaf.isNotBlank() && folderKey != leaf && folderKey.contains('/')) {
+                            legacyFolderUpgrades.add(Triple(uriString, leaf, folderKey))
+                        }
+                        continue
+                    }
 
                     knownUris.add(uriString)
                     if (canonicalPath.isNotBlank()) knownCanonicalPaths.add(canonicalPath)
@@ -208,10 +228,7 @@ class DevicePdfScanner(
                     val cleanTitle = extractCleanTitle(
                         rawName = rawName.ifBlank { file?.name.orEmpty() }
                     )
-                    val folderName = extractFolderName(
-                        file = file,
-                        relativePath = relPath
-                    )
+                    val folderName = folderKey
                     val timestamp = when {
                         modifiedSec > 0L -> (modifiedSec * 1000L).coerceAtMost(nowMs)
                         file != null && file.lastModified() > 0L -> file.lastModified().coerceAtMost(nowMs)
@@ -228,7 +245,7 @@ class DevicePdfScanner(
                             currentPage = 0,
                             readingStatus = ReadingStatus.TO_READ.name,
                             isFavorite = false,
-                            lastOpenedAt = timestamp,
+                            lastOpenedAt = 0L,
                             addedAt = timestamp
                         )
                     )
@@ -244,6 +261,7 @@ class DevicePdfScanner(
         knownCanonicalPaths: MutableSet<String>,
         discoveredCounter: AtomicInteger,
         insertedCounter: AtomicInteger,
+        legacyFolderUpgrades: MutableList<Triple<String, String, String>>,
         nowMs: Long
     ) = coroutineScope {
         val dirChannel = Channel<File>(Channel.UNLIMITED)
@@ -291,9 +309,16 @@ class DevicePdfScanner(
                                     val canonicalFile = canonicalOrAbsolute(child)
                                     val uriString = Uri.fromFile(child).toString()
 
+                                    val folderKey = extractFolderName(file = child, relativePath = "")
                                     val isDuplicatePath = !knownCanonicalPaths.add(canonicalFile)
                                     val isDuplicateUri = !knownUris.add(uriString)
-                                    if (isDuplicatePath || isDuplicateUri) continue
+                                    if (isDuplicatePath || isDuplicateUri) {
+                                        val leaf = child.parentFile?.name?.trim().orEmpty()
+                                        if (leaf.isNotBlank() && folderKey != leaf && folderKey.contains('/')) {
+                                            legacyFolderUpgrades.add(Triple(uriString, leaf, folderKey))
+                                        }
+                                        continue
+                                    }
 
                                     discoveredCounter.incrementAndGet()
                                     val timestamp = child.lastModified()
@@ -305,13 +330,13 @@ class DevicePdfScanner(
                                         PdfDocumentEntity(
                                             uriString = uriString,
                                             title = extractCleanTitle(name),
-                                            folderName = extractFolderName(file = child, relativePath = ""),
+                                            folderName = folderKey,
                                             fileSizeBytes = len,
                                             pageCount = 0,
                                             currentPage = 0,
                                             readingStatus = ReadingStatus.TO_READ.name,
                                             isFavorite = false,
-                                            lastOpenedAt = timestamp,
+                                            lastOpenedAt = 0L,
                                             addedAt = timestamp
                                         )
                                     )
@@ -433,23 +458,27 @@ class DevicePdfScanner(
         } else {
             rawName
         }.trim()
-        return stripped.ifBlank { "PDF Document" }
+        return stripped.ifBlank { context.getString(R.string.reader_default_title) }
     }
 
     private fun extractFolderName(file: File?, relativePath: String): String {
-        val fromFile = file?.parentFile?.name?.trim()
-        if (!fromFile.isNullOrBlank() &&
-            fromFile != "0" &&
-            !fromFile.equals("emulated", ignoreCase = true)
-        ) {
-            return fromFile
+        val parentDir = file?.parentFile
+        if (parentDir != null) {
+            return FolderKey.device(canonicalOrAbsolute(parentDir))
         }
-        val cleanedRel = relativePath.trim().trim('/')
+        val cleanedRel = relativePath.replace('\\', '/').trim().trim('/')
         if (cleanedRel.isNotBlank()) {
-            val segment = cleanedRel.substringAfterLast('/').trim()
-            if (segment.isNotBlank()) return segment
+            @Suppress("DEPRECATION")
+            val primaryRoot = runCatching { Environment.getExternalStorageDirectory() }
+                .getOrNull()
+                ?.let { canonicalOrAbsolute(it) }
+            return if (!primaryRoot.isNullOrBlank()) {
+                FolderKey.device("$primaryRoot/$cleanedRel")
+            } else {
+                FolderKey.device(cleanedRel)
+            }
         }
-        return "Internal Storage"
+        return FolderKey.IMPORTED
     }
 
     private companion object {

@@ -45,8 +45,19 @@ data class UserPreferences(
     val savedSignatureVector: String = "",
     val deepSearch: Boolean = false,
     val sortOrderName: String = "LastOpened",
-    val startupFilePromptShown: Boolean = false,
-    val startupBatteryPromptShown: Boolean = false
+    val lastOpenedRepairDone: Boolean = false
+)
+
+data class LibraryPrefs(
+    val sortOrderName: String = "LastOpened",
+    val isLibraryGridView: Boolean = true,
+    val deepSearch: Boolean = false
+)
+
+fun UserPreferences.toLibraryPrefs(): LibraryPrefs = LibraryPrefs(
+    sortOrderName = sortOrderName,
+    isLibraryGridView = isLibraryGridView,
+    deepSearch = deepSearch
 )
 
 class PreferencesRepository(private val context: Context) {
@@ -75,8 +86,7 @@ class PreferencesRepository(private val context: Context) {
         val SAVED_SIGNATURE_VECTOR = stringPreferencesKey("saved_signature_vector")
         val DEEP_SEARCH = booleanPreferencesKey("deep_search")
         val SORT_ORDER = stringPreferencesKey("sort_order")
-        val STARTUP_FILE_PROMPT_SHOWN = booleanPreferencesKey("startup_file_prompt_shown")
-        val STARTUP_BATTERY_PROMPT_SHOWN = booleanPreferencesKey("startup_battery_prompt_shown")
+        val LAST_OPENED_REPAIR_DONE = booleanPreferencesKey("last_opened_repair_done")
     }
 
     val preferencesFlow: Flow<UserPreferences> = context.mjPdfDataStore.data.map { prefs ->
@@ -104,8 +114,7 @@ class PreferencesRepository(private val context: Context) {
             savedSignatureVector = prefs[Keys.SAVED_SIGNATURE_VECTOR] ?: "",
             deepSearch = prefs[Keys.DEEP_SEARCH] ?: false,
             sortOrderName = prefs[Keys.SORT_ORDER] ?: "LastOpened",
-            startupFilePromptShown = prefs[Keys.STARTUP_FILE_PROMPT_SHOWN] ?: false,
-            startupBatteryPromptShown = prefs[Keys.STARTUP_BATTERY_PROMPT_SHOWN] ?: false
+            lastOpenedRepairDone = prefs[Keys.LAST_OPENED_REPAIR_DONE] ?: false
         )
     }
 
@@ -201,11 +210,7 @@ class PreferencesRepository(private val context: Context) {
         context.mjPdfDataStore.edit { it[Keys.SAVED_SIGNATURE_VECTOR] = vectorData }
     }
 
-    suspend fun setStartupFilePromptShown(shown: Boolean) {
-        context.mjPdfDataStore.edit { it[Keys.STARTUP_FILE_PROMPT_SHOWN] = shown }
-    }
-
-    suspend fun setStartupBatteryPromptShown(shown: Boolean) {
-        context.mjPdfDataStore.edit { it[Keys.STARTUP_BATTERY_PROMPT_SHOWN] = shown }
+    suspend fun setLastOpenedRepairDone(done: Boolean) {
+        context.mjPdfDataStore.edit { it[Keys.LAST_OPENED_REPAIR_DONE] = done }
     }
 }

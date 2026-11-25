@@ -2,8 +2,6 @@ package com.example
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.ActivityInfo
-import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -25,8 +23,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
@@ -40,6 +38,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.data.system.DevicePermissionsHelper
+import com.example.data.system.TempCacheCleanup
+import com.example.data.text.PdfBoxTextEngine
 import com.example.ui.model.toThemeMode
 import com.example.ui.screens.ReaderScreen
 import com.example.ui.screens.SettingsScreen
@@ -49,9 +49,10 @@ import com.example.ui.theme.TeenaTheme
 import com.example.ui.viewmodel.AppViewModel
 import com.example.ui.viewmodel.ReaderViewModel
 import com.example.ui.viewmodel.SettingsViewModel
+import com.example.ui.viewmodel.TextModeViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val ROUTE_HOME = "home"
 private const val ROUTE_READER = "reader"
@@ -66,8 +67,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        appContainer = AppContainer(applicationContext)
-        handleIncomingIntent(intent)
+        appContainer = (application as com.example.TeenaApp).container
+        appContainer.initialPreferences
+        val launchedFromHistory =
+            (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0
+        if (savedInstanceState == null && !launchedFromHistory) {
+            handleIncomingIntent(intent)
+        }
         enableEdgeToEdge()
 
         setContent {
@@ -76,7 +82,6 @@ class MainActivity : ComponentActivity() {
                 incomingPdfUriFlow = incomingExternalPdfUri,
                 onConsumeIncomingUri = { incomingExternalPdfUri.value = null },
                 onRegisterVolumeHandler = { handler -> volumeKeyHandler = handler },
-                onRotateScreen = ::toggleScreenOrientation,
                 onSharePdf = ::sharePdf,
                 onPrintPdf = ::printPdf
             )
@@ -103,15 +108,7 @@ class MainActivity : ComponentActivity() {
             intent.data?.let { uri ->
                 incomingExternalPdfUri.value = uri
             }
-        }
-    }
-
-    private fun toggleScreenOrientation() {
-        val currentOrientation = resources.configuration.orientation
-        requestedOrientation = if (currentOrientation == Configuration.ORIENTATION_LANDSCAPE) {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            setIntent(Intent(this, MainActivity::class.java))
         }
     }
 
@@ -131,20 +128,20 @@ private fun TeenaRoot(
     incomingPdfUriFlow: MutableStateFlow<Uri?>,
     onConsumeIncomingUri: () -> Unit,
     onRegisterVolumeHandler: (((Int) -> Boolean)?) -> Unit,
-    onRotateScreen: () -> Unit,
     onSharePdf: (String, String) -> Unit,
     onPrintPdf: (String, String) -> Unit
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val coroutineScope = rememberCoroutineScope()
 
     val appViewModel: AppViewModel = viewModel(
         factory = AppViewModel.factory(
             libraryRepository = appContainer.libraryRepository,
             preferencesRepository = appContainer.preferencesRepository,
-            pdfTextExtractor = appContainer.pdfTextExtractor,
-            devicePdfScanner = appContainer.devicePdfScanner
+            searchIndexRepository = appContainer.searchIndexRepository,
+            devicePdfScanner = appContainer.devicePdfScanner,
+            ocrRunner = appContainer.ocrRunner,
+            initialPreferences = appContainer.initialPreferences
         )
     )
     val readerViewModel: ReaderViewModel = viewModel(
@@ -152,7 +149,11 @@ private fun TeenaRoot(
             libraryRepository = appContainer.libraryRepository,
             preferencesRepository = appContainer.preferencesRepository,
             pdfEngine = appContainer.pdfEngine,
-            pdfTextExtractor = appContainer.pdfTextExtractor
+            searchIndexRepository = appContainer.searchIndexRepository,
+            searchIndexer = appContainer.searchIndexer,
+            textEngine = appContainer.textEngine,
+            appContext = context.applicationContext,
+            initialPreferences = appContainer.initialPreferences
         )
     )
     val settingsViewModel: SettingsViewModel = viewModel(
@@ -160,7 +161,11 @@ private fun TeenaRoot(
             preferencesRepository = appContainer.preferencesRepository,
             libraryRepository = appContainer.libraryRepository,
             pdfEngine = appContainer.pdfEngine,
-            devicePdfScanner = appContainer.devicePdfScanner
+            devicePdfScanner = appContainer.devicePdfScanner,
+            searchIndexRepository = appContainer.searchIndexRepository,
+            searchIndexer = appContainer.searchIndexer,
+            appScope = appContainer.appScope,
+            initialPreferences = appContainer.initialPreferences
         )
     )
 
@@ -168,32 +173,14 @@ private fun TeenaRoot(
     val incomingUri by incomingPdfUriFlow.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     var isOnReaderOrTextRoute by remember { mutableStateOf(false) }
-    var pendingAutoBatteryPrompt by remember { mutableStateOf(false) }
-
-    val batteryOptimizationLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        appViewModel.onPermissionsRefreshed(DevicePermissionsHelper.getStatus(context))
-    }
-
-    fun launchBatteryOptimizationExemption() {
-        runCatching {
-            batteryOptimizationLauncher.launch(DevicePermissionsHelper.buildBatteryOptimizationIntent(context))
-        }
-    }
+    var pendingManualScanPermissionCheck by remember { mutableStateOf(false) }
 
     fun handleAfterFilePermissionReturned() {
         val updatedStatus = DevicePermissionsHelper.getStatus(context)
         appViewModel.onPermissionsRefreshed(updatedStatus)
-        if (pendingAutoBatteryPrompt) {
-            pendingAutoBatteryPrompt = false
-            coroutineScope.launch {
-                val persisted = appContainer.preferencesRepository.preferencesFlow.first()
-                if (!updatedStatus.isBatteryOptimizationIgnored && !persisted.startupBatteryPromptShown) {
-                    appContainer.preferencesRepository.setStartupBatteryPromptShown(true)
-                    launchBatteryOptimizationExemption()
-                }
-            }
+        if (pendingManualScanPermissionCheck) {
+            pendingManualScanPermissionCheck = false
+            appViewModel.onManualAllFilesPermissionResult(updatedStatus.hasAllFilesAccess)
         }
     }
 
@@ -209,14 +196,19 @@ private fun TeenaRoot(
         handleAfterFilePermissionReturned()
     }
 
-    fun launchFullFileAccessPrompt() {
+    fun launchFullFileAccessPrompt(fromManualScan: Boolean = false) {
+        pendingManualScanPermissionCheck = fromManualScan
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             runCatching {
                 allFilesAccessLauncher.launch(DevicePermissionsHelper.buildAllFilesAccessIntent(context))
+            }.onFailure {
+                pendingManualScanPermissionCheck = false
             }
         } else {
             runCatching {
                 legacyStorageLauncher.launch(Manifest.permission.READ_EXTERNAL_STORAGE)
+            }.onFailure {
+                pendingManualScanPermissionCheck = false
             }
         }
     }
@@ -232,16 +224,17 @@ private fun TeenaRoot(
     }
 
     LaunchedEffect(Unit) {
-        val initialStatus = DevicePermissionsHelper.getStatus(context)
-        appViewModel.onPermissionsRefreshed(initialStatus)
-        val persistedPrefs = appContainer.preferencesRepository.preferencesFlow.first()
-        if (!initialStatus.hasAllFilesAccess && !persistedPrefs.startupFilePromptShown) {
-            appContainer.preferencesRepository.setStartupFilePromptShown(true)
-            pendingAutoBatteryPrompt = true
-            launchFullFileAccessPrompt()
-        } else if (!initialStatus.isBatteryOptimizationIgnored && !persistedPrefs.startupBatteryPromptShown) {
-            appContainer.preferencesRepository.setStartupBatteryPromptShown(true)
-            launchBatteryOptimizationExemption()
+        appContainer.searchIndexer.start()
+        appViewModel.onPermissionsRefreshed(DevicePermissionsHelper.getStatus(context))
+        withFrameNanos { }
+        val appCacheDir = context.applicationContext.cacheDir
+        val pdfBoxEngine = appContainer.textEngine as? PdfBoxTextEngine
+        withContext(Dispatchers.IO) {
+            val canCleanPdfBoxTmp = pdfBoxEngine?.hasActiveSession() != true
+            TempCacheCleanup.cleanExpiredTempFiles(
+                cacheDir = appCacheDir,
+                includePdfBoxTmp = canCleanPdfBoxTmp
+            )
         }
     }
 
@@ -260,6 +253,14 @@ private fun TeenaRoot(
         if (pickedUri != null) {
             appViewModel.importAndOpenPdf(pickedUri) { importedUri ->
                 navigateToReader(importedUri)
+            }
+        }
+    }
+
+    LaunchedEffect(navController) {
+        navController.currentBackStackEntryFlow.collect { entry ->
+            if (entry.destination.route == ROUTE_HOME) {
+                readerViewModel.closeDocument()
             }
         }
     }
@@ -324,8 +325,7 @@ private fun TeenaRoot(
                     onOpenSettings = {
                         navController.navigate(ROUTE_SETTINGS) { launchSingleTop = true }
                     },
-                    onRequestAllFilesAccess = ::launchFullFileAccessPrompt,
-                    onRequestBatteryExemption = ::launchBatteryOptimizationExemption
+                    onRequestAllFilesAccess = { launchFullFileAccessPrompt(fromManualScan = true) }
                 )
             }
 
@@ -359,17 +359,39 @@ private fun TeenaRoot(
                     onOpenSettings = {
                         navController.navigate(ROUTE_SETTINGS) { launchSingleTop = true }
                     },
-                    onRotateScreen = onRotateScreen,
                     onSharePdf = onSharePdf,
-                    onPrintPdf = onPrintPdf
+                    onPrintPdf = onPrintPdf,
+                    onRemoveFromLibrary = {
+                        if (decodedUri.isNotBlank()) {
+                            appViewModel.removeDocument(decodedUri)
+                        }
+                        navController.popBackStack()
+                    }
                 )
             }
 
             composable(ROUTE_TEXT_MODE) {
                 LaunchedEffect(Unit) { isOnReaderOrTextRoute = true }
+                val readerState by readerViewModel.uiState.collectAsStateWithLifecycle()
+                val textModeViewModel: TextModeViewModel = viewModel(
+                    factory = TextModeViewModel.factory(
+                        uriString = readerState.uriString,
+                        textEngine = appContainer.textEngine,
+                        preferencesRepository = appContainer.preferencesRepository,
+                        initialPreferences = appContainer.initialPreferences,
+                    )
+                )
                 TextModeScreen(
-                    viewModel = readerViewModel,
-                    onNavigateBack = { navController.popBackStack() }
+                    viewModel = textModeViewModel,
+                    documentTitle = readerState.documentTitle,
+                    initialPage = readerState.currentPage,
+                    onNavigateBack = { navController.popBackStack() },
+                    onViewOriginalPage = { pageIndex ->
+                        readerViewModel.jumpToPage(pageIndex)
+                        if (!navController.popBackStack()) {
+                            navigateToReader(readerState.uriString, pageIndex)
+                        }
+                    },
                 )
             }
 
@@ -378,8 +400,7 @@ private fun TeenaRoot(
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     onNavigateBack = { navController.popBackStack() },
-                    onRequestAllFilesAccess = ::launchFullFileAccessPrompt,
-                    onRequestBatteryExemption = ::launchBatteryOptimizationExemption
+                    onRequestAllFilesAccess = { launchFullFileAccessPrompt(fromManualScan = false) }
                 )
             }
         }

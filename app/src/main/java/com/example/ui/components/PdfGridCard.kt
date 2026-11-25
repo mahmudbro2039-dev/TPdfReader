@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -33,7 +34,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import com.example.R
 import com.example.ui.model.PdfItem
-import com.example.ui.model.progress
+import com.example.ui.theme.Alpha
 import com.example.ui.theme.TeenaTheme
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -49,12 +50,17 @@ fun PdfGridCard(
     val c = TeenaTheme.colors
     val cs = MaterialTheme.colorScheme
     val haptic = LocalHapticFeedback.current
-    val timeText = remember(item.lastOpenedAt) {
-        DateUtils.getRelativeTimeSpanString(
-            item.lastOpenedAt,
-            System.currentTimeMillis(),
-            DateUtils.MINUTE_IN_MILLIS
-        ).toString()
+    val displayTimestamp = if (item.lastOpenedAt > 0L) item.lastOpenedAt else item.addedAt
+    val timeText = remember(displayTimestamp) {
+        if (displayTimestamp <= 0L) {
+            ""
+        } else {
+            DateUtils.getRelativeTimeSpanString(
+                displayTimestamp,
+                System.currentTimeMillis(),
+                DateUtils.MINUTE_IN_MILLIS
+            ).toString()
+        }
     }
 
     Column(
@@ -80,7 +86,9 @@ fun PdfGridCard(
         ) {
             PdfCover(
                 uri = item.uri,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (item.isMissing) Alpha.missing else 1f)
             )
 
             if (item.isPinned) {
@@ -135,6 +143,7 @@ fun PdfGridCard(
             if (item.progress > 0f) {
                 CircularProgressBadge(
                     progress = item.progress,
+                    percent = item.percent,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .padding(s.badgePad)
@@ -158,9 +167,9 @@ fun PdfGridCard(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                text = timeText,
-                style = MaterialTheme.typography.bodySmall,
-                color = cs.onSurfaceVariant,
+                text = if (item.isMissing) stringResource(R.string.file_unavailable) else timeText,
+                style = if (item.isMissing) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                color = if (item.isMissing) cs.error else cs.onSurfaceVariant,
                 maxLines = 1,
                 softWrap = false,
                 overflow = TextOverflow.Ellipsis,

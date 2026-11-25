@@ -1,11 +1,15 @@
 package com.example.data.model
 
-enum class ReadingStatus(val label: String) {
-    TO_READ("To-Read"),
-    READING("Reading"),
-    ON_HOLD("On-Hold"),
-    COMPLETED("Completed"),
-    ABANDONED("Abandoned");
+import androidx.annotation.StringRes
+import com.example.R
+import com.example.ui.theme.ContentColors
+
+enum class ReadingStatus(@StringRes val labelRes: Int) {
+    TO_READ(R.string.enum_status_to_read),
+    READING(R.string.enum_status_reading),
+    ON_HOLD(R.string.enum_status_on_hold),
+    COMPLETED(R.string.enum_status_completed),
+    ABANDONED(R.string.enum_status_abandoned);
 
     companion object {
         fun fromName(name: String): ReadingStatus =
@@ -13,11 +17,11 @@ enum class ReadingStatus(val label: String) {
     }
 }
 
-enum class AppThemeMode(val label: String) {
-    SYSTEM("System"),
-    LIGHT("Light"),
-    DARK("Dark"),
-    AMOLED("AMOLED Black");
+enum class AppThemeMode(@StringRes val labelRes: Int) {
+    SYSTEM(R.string.theme_system),
+    LIGHT(R.string.theme_light),
+    DARK(R.string.theme_dark),
+    AMOLED(R.string.theme_amoled);
 
     companion object {
         fun fromName(name: String): AppThemeMode =
@@ -25,11 +29,11 @@ enum class AppThemeMode(val label: String) {
     }
 }
 
-enum class PdfColorMode(val label: String) {
-    NORMAL("Original"),
-    DARK_INVERT("Dark Mode"),
-    SEPIA("Warm Sepia"),
-    HIGH_CONTRAST("High Contrast");
+enum class PdfColorMode(@StringRes val labelRes: Int) {
+    NORMAL(R.string.pdf_color_normal),
+    DARK_INVERT(R.string.pdf_color_dark),
+    SEPIA(R.string.pdf_color_sepia),
+    HIGH_CONTRAST(R.string.pdf_color_high_contrast);
 
     companion object {
         fun fromName(name: String): PdfColorMode =
@@ -37,11 +41,11 @@ enum class PdfColorMode(val label: String) {
     }
 }
 
-enum class ScrollLayoutMode(val label: String, val shortLabel: String) {
-    VERTICAL("Vertical Continuous", "Continuous"),
-    HORIZONTAL("Horizontal Scroll", "Horizontal"),
-    SINGLE_PAGE("Single Page (Book Flip)", "Single Page"),
-    DUAL_PAGE("Dual-Page Book Spread", "Dual Page");
+enum class ScrollLayoutMode(@StringRes val labelRes: Int) {
+    VERTICAL(R.string.layout_vertical),
+    HORIZONTAL(R.string.layout_horizontal),
+    SINGLE_PAGE(R.string.layout_single_page),
+    DUAL_PAGE(R.string.layout_dual_page);
 
     companion object {
         fun fromName(name: String): ScrollLayoutMode =
@@ -49,10 +53,10 @@ enum class ScrollLayoutMode(val label: String, val shortLabel: String) {
     }
 }
 
-enum class PageFitPolicy(val label: String) {
-    FIT_WIDTH("Fit Width"),
-    FIT_HEIGHT("Fit Height"),
-    FIT_PAGE("Whole Page");
+enum class PageFitPolicy(@StringRes val labelRes: Int) {
+    FIT_WIDTH(R.string.fit_width),
+    FIT_HEIGHT(R.string.fit_height),
+    FIT_PAGE(R.string.fit_page);
 
     companion object {
         fun fromName(name: String): PageFitPolicy =
@@ -60,11 +64,11 @@ enum class PageFitPolicy(val label: String) {
     }
 }
 
-enum class TextModeTheme(val label: String) {
-    LIGHT("Paper"),
-    SEPIA("Sepia"),
-    DARK("Dark"),
-    DRACULA("Dracula");
+enum class TextModeTheme(@StringRes val labelRes: Int) {
+    LIGHT(R.string.text_theme_light),
+    SEPIA(R.string.text_theme_sepia),
+    DARK(R.string.theme_dark),
+    DRACULA(R.string.text_theme_dracula);
 
     companion object {
         fun fromName(name: String): TextModeTheme =
@@ -72,17 +76,17 @@ enum class TextModeTheme(val label: String) {
     }
 }
 
-enum class QuoteCardTheme(val label: String) {
-    LIGHT("Paper Light"),
-    DARK("Obsidian Dark"),
-    SEPIA("Warm Sepia"),
-    DRACULA("Dracula Purple")
+enum class QuoteCardTheme(@StringRes val labelRes: Int) {
+    LIGHT(R.string.quote_theme_light),
+    DARK(R.string.quote_theme_dark),
+    SEPIA(R.string.pdf_color_sepia),
+    DRACULA(R.string.quote_theme_dracula)
 }
 
-enum class TextFontChoice(val label: String) {
-    SANS("Sans"),
-    SERIF("Serif"),
-    MONO("Mono");
+enum class TextFontChoice(@StringRes val labelRes: Int) {
+    SANS(R.string.font_sans),
+    SERIF(R.string.font_serif),
+    MONO(R.string.font_mono);
 
     companion object {
         fun fromName(name: String): TextFontChoice =
@@ -90,10 +94,10 @@ enum class TextFontChoice(val label: String) {
     }
 }
 
-enum class AnnotationType(val label: String) {
-    HIGHLIGHT("Highlight"),
-    NOTE("Note"),
-    SIGNATURE("Signature");
+enum class AnnotationType(@StringRes val labelRes: Int) {
+    HIGHLIGHT(R.string.annotation_highlight),
+    NOTE(R.string.annotation_note),
+    SIGNATURE(R.string.annotation_signature);
 
     companion object {
         fun fromName(name: String): AnnotationType =
@@ -101,12 +105,12 @@ enum class AnnotationType(val label: String) {
     }
 }
 
-enum class HighlightColorOption(val label: String, val hexColor: String) {
-    YELLOW("Amber Yellow", "#FACC15"),
-    GREEN("Mint Green", "#4ADE80"),
-    BLUE("Sky Blue", "#38BDF8"),
-    PINK("Rose Pink", "#F472B6"),
-    ORANGE("Sunset Orange", "#FB923C");
+enum class HighlightColorOption(@StringRes val labelRes: Int, val hexColor: String) {
+    YELLOW(R.string.highlight_yellow, ContentColors.highlightYellowHex),
+    GREEN(R.string.highlight_green, ContentColors.highlightGreenHex),
+    BLUE(R.string.highlight_blue, ContentColors.highlightBlueHex),
+    PINK(R.string.highlight_pink, ContentColors.highlightPinkHex),
+    ORANGE(R.string.highlight_orange, ContentColors.highlightOrangeHex);
 
     companion object {
         fun fromHex(hex: String): HighlightColorOption =
@@ -114,17 +118,17 @@ enum class HighlightColorOption(val label: String, val hexColor: String) {
     }
 }
 
-enum class LibrarySortOrder(val label: String) {
-    RECENTLY_OPENED("Recently Opened"),
-    TITLE_ASC("Title (A–Z)"),
-    PROGRESS_DESC("Reading Progress"),
-    PAGE_COUNT_DESC("Page Count"),
-    FILE_SIZE_DESC("File Size")
+enum class LibrarySortOrder(@StringRes val labelRes: Int) {
+    RECENTLY_OPENED(R.string.library_sort_recent),
+    TITLE_ASC(R.string.library_sort_title),
+    PROGRESS_DESC(R.string.library_sort_progress),
+    PAGE_COUNT_DESC(R.string.library_sort_pages),
+    FILE_SIZE_DESC(R.string.library_sort_size)
 }
 
-enum class RenderQuality(val label: String, val scaleFactor: Float) {
-    STANDARD("Standard (Fast)", 0.95f),
-    HIGH("High DPI (Crisp)", 1.25f);
+enum class RenderQuality(@StringRes val labelRes: Int, val scaleFactor: Float) {
+    STANDARD(R.string.render_quality_standard, 0.95f),
+    HIGH(R.string.render_quality_high, 1.25f);
 
     companion object {
         fun fromName(name: String): RenderQuality =

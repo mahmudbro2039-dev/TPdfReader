@@ -26,9 +26,10 @@ abstract class MjPdfDatabase : RoomDatabase() {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     MjPdfDatabase::class.java,
-                    "mj_pdf_database.db"
+                    "mj_pdf_database.db" // Legacy name kept on purpose. Changing it creates an empty DB and loses all user data.
                 )
-                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    // From version 2 onward, every change MUST add an explicit Migration. Never use destructive fallback again.
+                    .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1)
                     .build()
                     .also { instance = it }
             }

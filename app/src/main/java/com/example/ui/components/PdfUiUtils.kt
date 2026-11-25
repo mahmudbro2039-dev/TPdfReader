@@ -67,7 +67,7 @@ fun readerCanvasColorFor(mode: PdfColorMode, isDarkTheme: Boolean): Color {
 }
 
 fun parseHexColor(hex: String, fallback: Color): Color =
-    runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
+    com.example.ui.theme.ContentColors.parseHex(hex, fallback)
 
 fun serializeVectorStrokes(strokes: List<List<Offset>>): String {
     return strokes.filter { it.isNotEmpty() }.joinToString("|") { stroke ->

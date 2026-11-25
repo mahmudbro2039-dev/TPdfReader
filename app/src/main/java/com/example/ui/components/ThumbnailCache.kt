@@ -8,9 +8,13 @@ import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.util.LruCache
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -44,6 +48,11 @@ object ThumbnailCache {
         return cache.get(uri)?.takeIf { !it.isRecycled }
     }
 
+    @Suppress("UNUSED_PARAMETER")
+    fun peekMemory(uri: String, widthPx: Int = 0): ImageBitmap? {
+        return peek(uri)?.asImageBitmap()
+    }
+
     fun evict(uri: String) {
         if (uri.isBlank()) return
         cache.remove(uri)
@@ -62,6 +71,7 @@ object ThumbnailCache {
 
         val appContext = context.applicationContext ?: context
         return withContext(Dispatchers.IO) {
+            ensureActive()
             peek(uri)?.let { return@withContext it }
 
             val diskFile = File(resolveDiskDir(appContext), "${md5(uri)}.jpg")
@@ -76,6 +86,7 @@ object ThumbnailCache {
             }
 
             val rendered = renderSemaphore.withPermit {
+                ensureActive()
                 peek(uri)?.let { return@withPermit it }
 
                 if (diskFile.exists() && diskFile.length() > 0L) {
@@ -86,11 +97,12 @@ object ThumbnailCache {
                     }
                 }
 
-                runCatching {
+                try {
                     openFileDescriptor(appContext, uri)?.use { pfd ->
                         val renderer = PdfRenderer(pfd)
                         try {
                             if (renderer.pageCount <= 0) return@use null
+                            ensureActive()
                             val page = renderer.openPage(0)
                             try {
                                 val targetWidth = widthPx.coerceIn(200, 360)
@@ -113,7 +125,11 @@ object ThumbnailCache {
                             renderer.close()
                         }
                     }
-                }.getOrNull()
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Exception) {
+                    null
+                }
             }
 
             if (rendered != null && !diskFile.exists()) {

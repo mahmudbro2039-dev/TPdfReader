@@ -1,13 +1,17 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -15,19 +19,28 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import com.example.R
+import com.example.data.model.FolderKey
+import com.example.data.search.parseSnippet
 import com.example.ui.components.EmptyState
 import com.example.ui.components.FilterChipsRow
 import com.example.ui.components.FolderBreadcrumb
@@ -39,11 +52,12 @@ import com.example.ui.components.SectionHeader
 import com.example.ui.components.ShimmerLoadingGrid
 import com.example.ui.components.ShimmerLoadingList
 import com.example.ui.components.formatFileSize
+import com.example.data.model.ReadingStatus
 import com.example.ui.model.FolderItem
 import com.example.ui.model.PdfItem
 import com.example.ui.model.ViewMode
-import com.example.ui.theme.ReadingStatus
 import com.example.ui.theme.TeenaTheme
+import com.example.ui.viewmodel.DeepSearchDocGroupUi
 
 @Composable
 fun RecentTabScreen(
@@ -59,7 +73,7 @@ fun RecentTabScreen(
 
     when {
         isLoading -> ShimmerLoadingList()
-        heroItem == null -> EmptyState(
+        heroItem == null && remainingItems.isEmpty() -> EmptyState(
             title = stringResource(R.string.empty_title),
             body = stringResource(R.string.empty_body),
             showOpenButton = true,
@@ -77,11 +91,13 @@ fun RecentTabScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(s.sm)
             ) {
-                item(key = "hero", contentType = "hero") {
-                    HeroContinueCard(
-                        item = heroItem,
-                        onClick = { onOpenPdf(heroItem) }
-                    )
+                if (heroItem != null) {
+                    item(key = "hero", contentType = "hero") {
+                        HeroContinueCard(
+                            item = heroItem,
+                            onClick = { onOpenPdf(heroItem) }
+                        )
+                    }
                 }
                 if (remainingItems.isNotEmpty()) {
                     item(key = "recent_header", contentType = "header") {
@@ -216,6 +232,7 @@ fun FoldersTabScreen(
     isLoading: Boolean,
     folders: List<FolderItem>,
     selectedFolderName: String?,
+    selectedFolderDisplayName: String? = null,
     folderPdfs: List<PdfItem>,
     listState: LazyListState,
     gridState: LazyGridState,
@@ -239,10 +256,16 @@ fun FoldersTabScreen(
     }
 
     val folderTotalSizeBytes = remember(folderPdfs) { folderPdfs.sumOf { it.sizeBytes } }
+    val breadcrumbTitle = when {
+        selectedFolderName == null -> null
+        selectedFolderName == FolderKey.IMPORTED -> stringResource(R.string.folder_imported)
+        !selectedFolderDisplayName.isNullOrBlank() -> selectedFolderDisplayName
+        else -> FolderKey.displayName(selectedFolderName, stringResource(R.string.folder_imported))
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         FolderBreadcrumb(
-            currentFolder = selectedFolderName,
+            currentFolder = breadcrumbTitle,
             pdfCount = folderPdfs.size,
             totalSizeBytes = folderTotalSizeBytes,
             onRootClick = onCloseFolder
@@ -309,12 +332,12 @@ fun FoldersTabScreen(
                     }
                     items(
                         items = folders,
-                        key = { it.name },
+                        key = { it.key },
                         contentType = { "folder" }
                     ) { folder ->
                         FolderCard(
                             folder = folder,
-                            onClick = { onOpenFolder(folder.name) }
+                            onClick = { onOpenFolder(folder.key) }
                         )
                     }
                 }
@@ -359,36 +382,70 @@ fun FoldersTabScreen(
 @Composable
 fun SearchResultsScreen(
     isSearching: Boolean,
+    deepSearch: Boolean,
     results: List<PdfItem>,
+    deepSearchGroups: List<DeepSearchDocGroupUi>,
+    indexDoneCount: Int,
+    indexTotalCount: Int,
     onOpenPdf: (PdfItem) -> Unit,
+    onOpenHit: (PdfItem, Int) -> Unit,
     onItemMore: (PdfItem) -> Unit,
     onPickPdf: () -> Unit
 ) {
     val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+    val showIncompleteBanner = deepSearch && indexTotalCount > 0 && indexDoneCount < indexTotalCount
+    val hasAnyResults = results.isNotEmpty() || (deepSearch && deepSearchGroups.isNotEmpty())
 
-    when {
-        isSearching && results.isEmpty() -> ShimmerLoadingList()
-        results.isEmpty() -> EmptyState(
-            title = stringResource(R.string.empty_search_title),
-            body = stringResource(R.string.empty_search_body),
-            showOpenButton = false,
-            onOpenPdf = onPickPdf
-        )
-        else -> {
-            Column(modifier = Modifier.fillMaxSize()) {
-                if (isSearching) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(
-                        start = s.screenH,
-                        end = s.screenH,
-                        top = s.sm,
-                        bottom = s.listBottom
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(s.md)
-                ) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (showIncompleteBanner) {
+            Text(
+                text = pluralStringResource(
+                    R.plurals.search_index_incomplete,
+                    indexTotalCount,
+                    indexDoneCount,
+                    indexTotalCount
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = s.screenH, vertical = s.xs)
+                    .testTag("search_index_incomplete_banner")
+            )
+        }
+
+        if (isSearching && !hasAnyResults) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            ShimmerLoadingList()
+        } else if (!hasAnyResults) {
+            val emptyTitle = if (deepSearch && indexTotalCount > 0 && indexDoneCount >= indexTotalCount) {
+                stringResource(R.string.search_no_results)
+            } else {
+                stringResource(R.string.empty_search_title)
+            }
+            EmptyState(
+                title = emptyTitle,
+                body = stringResource(R.string.empty_search_body),
+                showOpenButton = false,
+                onOpenPdf = onPickPdf
+            )
+        } else {
+            if (isSearching) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(
+                    start = s.screenH,
+                    end = s.screenH,
+                    top = s.sm,
+                    bottom = s.listBottom
+                ),
+                verticalArrangement = Arrangement.spacedBy(s.md)
+            ) {
+                if (results.isNotEmpty()) {
                     item(key = "search_header", contentType = "header") {
                         SectionHeader(
                             text = stringResource(R.string.search_results_header),
@@ -397,7 +454,7 @@ fun SearchResultsScreen(
                     }
                     items(
                         items = results,
-                        key = { it.id },
+                        key = { "fn_${it.id}" },
                         contentType = { "pdf" }
                     ) { item ->
                         PdfRowCard(
@@ -407,7 +464,100 @@ fun SearchResultsScreen(
                         )
                     }
                 }
+
+                if (deepSearch && deepSearchGroups.isNotEmpty()) {
+                    item(key = "inside_pdfs_header", contentType = "header") {
+                        SectionHeader(
+                            text = stringResource(R.string.search_inside_pdfs_title),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                    deepSearchGroups.forEach { group ->
+                        item(key = "deep_doc_${group.item.id}", contentType = "pdf") {
+                            PdfRowCard(
+                                item = group.item,
+                                onClick = { onOpenPdf(group.item) },
+                                onMore = onItemMore
+                            )
+                        }
+                        items(
+                            items = group.hits.take(3),
+                            key = { hit -> "hit_${group.item.id}_${hit.pageIndex}" },
+                            contentType = { "deep_hit" }
+                        ) { hit ->
+                            DeepSearchHitRow(
+                                pageNumber = hit.pageIndex + 1,
+                                rawSnippet = hit.snippet,
+                                onClick = { onOpenHit(group.item, hit.pageIndex) },
+                                modifier = Modifier.padding(start = s.md)
+                            )
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun DeepSearchHitRow(
+    pageNumber: Int,
+    rawSnippet: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val s = TeenaTheme.spacing
+    val sz = TeenaTheme.sizes
+    val cs = MaterialTheme.colorScheme
+    val chunks = remember(rawSnippet) { parseSnippet(rawSnippet) }
+    val annotated = remember(chunks, cs.primary) {
+        buildAnnotatedString {
+            for ((text, highlighted) in chunks) {
+                if (highlighted) {
+                    withStyle(SpanStyle(color = cs.primary, fontWeight = FontWeight.Bold)) {
+                        append(text)
+                    }
+                } else {
+                    append(text)
+                }
+            }
+        }
+    }
+
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = cs.surface,
+        border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline),
+        modifier = modifier
+            .fillMaxWidth()
+            .minimumInteractiveComponentSize()
+            .clip(MaterialTheme.shapes.medium)
+            .clickable(onClick = onClick)
+            .testTag("search_hit_page_$pageNumber")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = s.md, vertical = s.sm),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.search_result_page, pageNumber),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = cs.primary,
+                maxLines = 1,
+                softWrap = false
+            )
+            Spacer(modifier = Modifier.width(s.sm))
+            Text(
+                text = annotated,
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }

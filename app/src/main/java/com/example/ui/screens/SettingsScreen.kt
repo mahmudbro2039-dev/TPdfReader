@@ -19,12 +19,13 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.BatteryChargingFull
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.FolderOpen
+import androidx.compose.material.icons.rounded.ManageSearch
 import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -64,6 +65,7 @@ import com.example.data.model.PageFitPolicy
 import com.example.data.model.PdfColorMode
 import com.example.data.model.RenderQuality
 import com.example.data.model.ScrollLayoutMode
+import com.example.data.search.PauseReason
 import com.example.data.system.DevicePermissionsHelper
 import com.example.ui.model.toAppThemeMode
 import com.example.ui.model.toThemeMode
@@ -77,13 +79,13 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit,
-    onRequestAllFilesAccess: () -> Unit = {},
-    onRequestBatteryExemption: () -> Unit = {}
+    onRequestAllFilesAccess: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val prefs by viewModel.preferences.collectAsStateWithLifecycle()
     val scanProgress by viewModel.scanProgress.collectAsStateWithLifecycle()
+    val searchIndexStatus by viewModel.searchIndexStatus.collectAsStateWithLifecycle()
     var accessStatus by remember { mutableStateOf(DevicePermissionsHelper.getStatus(context)) }
 
     androidx.compose.runtime.DisposableEffect(lifecycleOwner, context) {
@@ -99,6 +101,7 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     var showClearHistoryDialog by remember { mutableStateOf(false) }
+    var showRebuildIndexDialog by remember { mutableStateOf(false) }
 
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
@@ -163,16 +166,6 @@ fun SettingsScreen(
                         onClick = onRequestAllFilesAccess
                     )
                     HorizontalDivider(thickness = sz.hairline, color = c.hairline)
-                    ActionSettingRow(
-                        icon = if (accessStatus.isBatteryOptimizationIgnored) Icons.Rounded.CheckCircle else Icons.Rounded.BatteryChargingFull,
-                        title = stringResource(R.string.perm_battery_title),
-                        subtitle = stringResource(
-                            if (accessStatus.isBatteryOptimizationIgnored) R.string.perm_battery_granted
-                            else R.string.perm_battery_missing
-                        ),
-                        onClick = onRequestBatteryExemption
-                    )
-                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
                     val scanSubtitle = if (scanProgress.isScanning) {
                         stringResource(R.string.scanner_found_count, scanProgress.totalFoundCount)
                     } else {
@@ -199,6 +192,32 @@ fun SettingsScreen(
                             }
                         }
                     )
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
+                    val indexCountSubtitle = stringResource(
+                        R.string.settings_search_index_status,
+                        searchIndexStatus.doneCount,
+                        searchIndexStatus.totalCount
+                    )
+                    val pausedText = when (searchIndexStatus.pauseReason) {
+                        PauseReason.LOW_BATTERY -> stringResource(R.string.settings_search_index_paused_battery)
+                        PauseReason.POWER_SAVER -> stringResource(R.string.settings_search_index_paused_saver)
+                        null -> null
+                    }
+                    ActionSettingRow(
+                        icon = Icons.Rounded.ManageSearch,
+                        title = stringResource(R.string.settings_search_index_title),
+                        subtitle = indexCountSubtitle,
+                        secondarySubtitle = pausedText,
+                        onClick = null
+                    )
+                    HorizontalDivider(thickness = sz.hairline, color = c.hairline)
+                    ActionSettingRow(
+                        icon = Icons.Rounded.RestartAlt,
+                        title = stringResource(R.string.settings_search_index_rebuild),
+                        subtitle = stringResource(R.string.settings_search_index_rebuild_confirm),
+                        modifier = Modifier.testTag("settings_rebuild_index"),
+                        onClick = { showRebuildIndexDialog = true }
+                    )
                 }
             }
 
@@ -222,7 +241,7 @@ fun SettingsScreen(
                         label = stringResource(R.string.settings_default_pdf_color),
                         options = PdfColorMode.entries,
                         selected = prefs.defaultPdfColorMode,
-                        optionLabel = { it.label },
+                        optionLabel = { stringResource(it.labelRes) },
                         onSelect = viewModel::setDefaultPdfColorMode
                     )
                 }
@@ -234,7 +253,7 @@ fun SettingsScreen(
                         label = stringResource(R.string.settings_default_layout),
                         options = ScrollLayoutMode.entries,
                         selected = prefs.defaultLayoutMode,
-                        optionLabel = { it.label },
+                        optionLabel = { stringResource(it.labelRes) },
                         onSelect = viewModel::setDefaultLayoutMode
                     )
                     HorizontalDivider(thickness = sz.hairline, color = c.hairline)
@@ -242,7 +261,7 @@ fun SettingsScreen(
                         label = stringResource(R.string.settings_default_fit),
                         options = PageFitPolicy.entries,
                         selected = prefs.defaultPageFitPolicy,
-                        optionLabel = { it.label },
+                        optionLabel = { stringResource(it.labelRes) },
                         onSelect = viewModel::setDefaultPageFitPolicy
                     )
                     HorizontalDivider(thickness = sz.hairline, color = c.hairline)
@@ -293,7 +312,7 @@ fun SettingsScreen(
                         label = stringResource(R.string.settings_render_quality),
                         options = RenderQuality.entries,
                         selected = prefs.renderQuality,
-                        optionLabel = { it.label },
+                        optionLabel = { stringResource(it.labelRes) },
                         onSelect = viewModel::setRenderQuality
                     )
                     HorizontalDivider(thickness = sz.hairline, color = c.hairline)
@@ -375,6 +394,32 @@ fun SettingsScreen(
             }
         )
     }
+
+    if (showRebuildIndexDialog) {
+        AlertDialog(
+            onDismissRequest = { showRebuildIndexDialog = false },
+            containerColor = cs.surface,
+            shape = MaterialTheme.shapes.extraLarge,
+            title = { Text(stringResource(R.string.settings_search_index_rebuild)) },
+            text = { Text(stringResource(R.string.settings_search_index_rebuild_confirm)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRebuildIndexDialog = false
+                        viewModel.rebuildSearchIndex()
+                    },
+                    modifier = Modifier.testTag("settings_rebuild_index_confirm")
+                ) {
+                    Text(stringResource(R.string.settings_search_index_rebuild))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRebuildIndexDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -410,7 +455,7 @@ private fun <T> ChipOptionGroup(
     label: String,
     options: List<T>,
     selected: T,
-    optionLabel: (T) -> String,
+    optionLabel: @Composable (T) -> String,
     onSelect: (T) -> Unit
 ) {
     val s = TeenaTheme.spacing
@@ -420,7 +465,7 @@ private fun <T> ChipOptionGroup(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
             items(
                 items = options,
-                key = { optionLabel(it) },
+                key = { (it as? Enum<*>)?.name ?: it.hashCode() },
                 contentType = { "option_chip" }
             ) { item ->
                 FilterChip(
@@ -470,17 +515,24 @@ private fun ActionSettingRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
+    secondarySubtitle: String? = null,
     isDestructive: Boolean = false,
-    onClick: () -> Unit
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)?
 ) {
     val s = TeenaTheme.spacing
     val cs = MaterialTheme.colorScheme
     val tint = if (isDestructive) cs.error else cs.primary
+    val clickModifier = if (onClick != null) {
+        Modifier.clickable(onClick = onClick)
+    } else {
+        Modifier
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .then(clickModifier)
             .padding(vertical = s.md)
     ) {
         Icon(imageVector = icon, contentDescription = null, tint = tint)
@@ -495,6 +547,13 @@ private fun ActionSettingRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant
             )
+            if (secondarySubtitle != null) {
+                Text(
+                    text = secondarySubtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = cs.onSurfaceVariant
+                )
+            }
         }
     }
 }

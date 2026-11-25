@@ -10,16 +10,19 @@ import com.example.data.local.MjPdfDatabase
 import com.example.data.local.PdfDocumentEntity
 import com.example.data.local.PreferencesRepository
 import com.example.data.model.AnnotationType
+import com.example.data.model.FolderKey
 import com.example.data.model.ReadingStatus
 import com.example.data.model.ScrollLayoutMode
 import com.example.data.pdf.DevicePdfScanner
 import com.example.data.pdf.PdfEngine
-import com.example.data.pdf.PdfTextExtractor
 import com.example.data.repository.PdfLibraryRepository
+import com.example.data.search.SearchIndexRepository
+import com.example.data.search.SearchTextNormalizer
+import com.example.data.search.db.IndexStatus
+import com.example.data.search.db.SearchIndexDatabase
 import com.example.data.system.DeviceAccessStatus
 import com.example.data.system.DevicePermissionsHelper
 import com.example.ui.model.SortOrder
-import com.example.ui.theme.ReadingStatus as UiReadingStatus
 import com.example.ui.viewmodel.AppUiState
 import com.example.ui.viewmodel.AppViewModel
 import com.example.ui.viewmodel.ReaderLoadState
@@ -50,10 +53,11 @@ class ScenarioAndPerformanceTest {
 
     private lateinit var context: Context
     private lateinit var db: MjPdfDatabase
+    private lateinit var indexDb: SearchIndexDatabase
+    private lateinit var indexRepo: SearchIndexRepository
     private lateinit var repository: PdfLibraryRepository
     private lateinit var preferencesRepository: PreferencesRepository
     private lateinit var pdfEngine: PdfEngine
-    private lateinit var pdfTextExtractor: PdfTextExtractor
 
     @Before
     fun setUp() {
@@ -61,18 +65,23 @@ class ScenarioAndPerformanceTest {
         db = Room.inMemoryDatabaseBuilder(context, MjPdfDatabase::class.java)
             .allowMainThreadQueries()
             .build()
+        indexDb = Room.inMemoryDatabaseBuilder(context, SearchIndexDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        indexRepo = SearchIndexRepository(indexDb)
         pdfEngine = PdfEngine(context)
-        pdfTextExtractor = PdfTextExtractor(context)
         preferencesRepository = PreferencesRepository(context)
         repository = PdfLibraryRepository(
             context = context,
             pdfDao = db.pdfDao(),
-            pdfEngine = pdfEngine
+            pdfEngine = pdfEngine,
+            searchIndexRepository = indexRepo
         )
     }
 
     @After
     fun tearDown() {
+        indexDb.close()
         db.close()
     }
 
@@ -80,7 +89,7 @@ class ScenarioAndPerformanceTest {
     fun `clearAllLibraryData atomically clears documents bookmarks and annotations`() = runBlocking {
         val dao = db.pdfDao()
         val uri = "file:///test_atomic_clear.pdf"
-        dao.upsertDocument(
+        dao.registerOrRefresh(
             PdfDocumentEntity(
                 uriString = uri,
                 title = "Atomic Book",
@@ -116,7 +125,7 @@ class ScenarioAndPerformanceTest {
     @Test
     fun `AppViewModel normalizes blank folder to Storage and populates currentFolderItems`() = runBlocking {
         val dao = db.pdfDao()
-        dao.upsertDocument(
+        dao.registerOrRefresh(
             PdfDocumentEntity(
                 uriString = "file:///unfoldered_doc.pdf",
                 title = "Unfoldered Manual",
@@ -127,7 +136,7 @@ class ScenarioAndPerformanceTest {
                 lastOpenedAt = System.currentTimeMillis()
             )
         )
-        dao.upsertDocument(
+        dao.registerOrRefresh(
             PdfDocumentEntity(
                 uriString = "file:///research_doc.pdf",
                 title = "Research Paper",
@@ -140,74 +149,66 @@ class ScenarioAndPerformanceTest {
             )
         )
 
-        val viewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+        val viewModel = AppViewModel(repository, preferencesRepository, indexRepo)
         val collectJob = launch(Dispatchers.Default) { viewModel.uiState.collect {} }
         try {
             val loadedState = awaitState(viewModel) { !it.isLoading && it.totalCount >= 2 }
-            assertTrue(loadedState.folderItems.any { it.name == "Storage" && it.pdfCount >= 1 })
+            assertTrue(loadedState.folderItems.any { it.key == FolderKey.IMPORTED && it.pdfCount >= 1 })
 
-            viewModel.openFolder("Storage")
+            viewModel.openFolder(FolderKey.IMPORTED)
             val folderState = awaitState(viewModel) {
-                it.selectedFolderName == "Storage" &&
+                it.selectedFolderName == FolderKey.IMPORTED &&
                     it.currentFolderItems.any { item -> item.title == "Unfoldered Manual" }
             }
             assertEquals("Unfoldered Manual", folderState.currentFolderItems.first().title)
 
-            viewModel.selectStatusFilter(UiReadingStatus.Completed)
-            val filteredState = awaitState(viewModel) { it.selectedStatusFilter == UiReadingStatus.Completed }
-            assertTrue(filteredState.libraryItems.all { it.status == UiReadingStatus.Completed })
+            viewModel.selectStatusFilter(ReadingStatus.COMPLETED)
+            val filteredState = awaitState(viewModel) { it.selectedStatusFilter == ReadingStatus.COMPLETED }
+            assertTrue(filteredState.libraryItems.all { it.status == ReadingStatus.COMPLETED })
         } finally {
             collectJob.cancel()
         }
     }
 
     @Test
-    fun `AppViewModel deep search runs in parallel across FlateDecode PDFs and hits extractor cache`() = runBlocking {
-        val pdfA = File(context.cacheDir, "deep_search_flate_a.pdf")
-        val pdfB = File(context.cacheDir, "deep_search_flate_b.pdf")
+    fun `AppViewModel deep search queries SearchIndexRepository FTS4 index`() = runBlocking {
+        val uriA = "file:///deep_search_alpha.pdf"
+        val uriB = "file:///deep_search_beta.pdf"
+
+        db.pdfDao().registerOrRefresh(
+            PdfDocumentEntity(uriString = uriA, title = "Doc Alpha", folderName = "Science", pageCount = 1, lastOpenedAt = 10L)
+        )
+        db.pdfDao().registerOrRefresh(
+            PdfDocumentEntity(uriString = uriB, title = "Doc Beta", folderName = "Design", pageCount = 1, lastOpenedAt = 5L)
+        )
+
+        val docA = indexRepo.getOrCreate(uriA, "fpA")
+        indexRepo.writeTextBatch(docA.docId, listOf(0 to SearchTextNormalizer.forIndex("Quantum Entanglement in Kotlin Coroutines")), 1)
+        indexRepo.setStatus(docA.docId, IndexStatus.DONE)
+
+        val docB = indexRepo.getOrCreate(uriB, "fpB")
+        indexRepo.writeTextBatch(docB.docId, listOf(0 to SearchTextNormalizer.forIndex("Classical Architecture Principles")), 1)
+        indexRepo.setStatus(docB.docId, IndexStatus.DONE)
+
+        preferencesRepository.setDeepSearch(true)
+        val viewModel = AppViewModel(repository, preferencesRepository, indexRepo)
+        val collectJob = launch(Dispatchers.Default) { viewModel.uiState.collect {} }
         try {
-            writeFlatePdf(pdfA, "BT (Quantum Entanglement in Kotlin Coroutines) Tj ET")
-            writeFlatePdf(pdfB, "BT (Classical Architecture Principles) Tj ET")
+            awaitState(viewModel) { it.deepSearch && it.totalCount >= 2 }
 
-            val uriA = Uri.fromFile(pdfA).toString()
-            val uriB = Uri.fromFile(pdfB).toString()
-
-            db.pdfDao().upsertDocument(
-                PdfDocumentEntity(uriString = uriA, title = "Doc Alpha", folderName = "Science", pageCount = 1, lastOpenedAt = 10L)
-            )
-            db.pdfDao().upsertDocument(
-                PdfDocumentEntity(uriString = uriB, title = "Doc Beta", folderName = "Design", pageCount = 1, lastOpenedAt = 5L)
-            )
-
-            // Verify FlateDecode + cache hit
-            val pagesFirst = pdfTextExtractor.extractPagesText(uriA, 1)
-            assertTrue(PdfTextExtractor.containsNormalized(pagesFirst.first(), "quantum entanglement"))
-            val pagesCached = pdfTextExtractor.extractPagesText(uriA, 1)
-            assertEquals(pagesFirst, pagesCached)
-
-            preferencesRepository.setDeepSearch(true)
-            val viewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
-            val collectJob = launch(Dispatchers.Default) { viewModel.uiState.collect {} }
-            try {
-                awaitState(viewModel) { it.deepSearch && it.totalCount >= 2 }
-
-                viewModel.onSubmitSearch("quantum entanglement")
-                val searchState = awaitState(viewModel) {
-                    !it.isSearching &&
-                        it.searchResults.any { item -> item.uri == uriA }
-                }
-                assertTrue(searchState.searchResults.any { it.title == "Doc Alpha" })
-                assertFalse(searchState.searchResults.any { it.title == "Doc Beta" })
-
-                viewModel.setSortOrder(SortOrder.Name)
-                val sortedState = awaitState(viewModel) { it.sort == SortOrder.Name }
-                assertEquals(SortOrder.Name, sortedState.sort)
-            } finally {
-                collectJob.cancel()
+            viewModel.onSubmitSearch("quantum entanglement")
+            val searchState = awaitState(viewModel) {
+                !it.isSearching &&
+                    it.deepSearchGroups.any { grp -> grp.item.uri == uriA }
             }
+            assertTrue(searchState.deepSearchGroups.any { it.item.title == "Doc Alpha" })
+            assertFalse(searchState.deepSearchGroups.any { it.item.title == "Doc Beta" })
+
+            viewModel.setSortOrder(SortOrder.Name)
+            val sortedState = awaitState(viewModel) { it.sort == SortOrder.Name }
+            assertEquals(SortOrder.Name, sortedState.sort)
         } finally {
-            pdfA.delete()
-            pdfB.delete()
+            collectJob.cancel()
         }
     }
 
@@ -221,11 +222,11 @@ class ScenarioAndPerformanceTest {
     @Test
     fun `ReaderViewModel stepSinglePage navigates 1 page in DualPage mode while stepPage steps spreads`() = runBlocking {
         val uri = "file:///reader_step_test.pdf"
-        db.pdfDao().upsertDocument(
+        db.pdfDao().registerOrRefresh(
             PdfDocumentEntity(uriString = uri, title = "Dual Page Guide", folderName = "Docs", pageCount = 6, currentPage = 0)
         )
 
-        val readerVm = ReaderViewModel(repository, preferencesRepository, pdfEngine, pdfTextExtractor)
+        val readerVm = ReaderViewModel(repository, preferencesRepository, pdfEngine, indexRepo)
         readerVm.setLayoutMode(ScrollLayoutMode.DUAL_PAGE)
 
         val field = ReaderViewModel::class.java.getDeclaredField("_uiState")
@@ -284,7 +285,7 @@ class ScenarioAndPerformanceTest {
 
             // Pre-seed validPdf1 with existing user progress & favorite flag that MUST NOT be overwritten
             val preSeededUri = Uri.fromFile(validPdf1).toString()
-            db.pdfDao().upsertDocument(
+            db.pdfDao().registerOrRefresh(
                 PdfDocumentEntity(
                     uriString = preSeededUri,
                     title = "Kotlin Deep Dive",
@@ -314,7 +315,9 @@ class ScenarioAndPerformanceTest {
             val newlyScanned = allDocs.firstOrNull { it.uriString == newlyScannedUri }
             assertTrue(newlyScanned != null)
             assertEquals("Annual_Report", newlyScanned?.title)
-            assertEquals("Reports", newlyScanned?.folderName)
+            val expectedReportsKey = FolderKey.device(reportsDir.canonicalPath)
+            assertEquals(expectedReportsKey, newlyScanned?.folderName)
+            assertEquals("Reports", FolderKey.displayName(newlyScanned!!.folderName))
 
             assertFalse(allDocs.any { it.uriString == Uri.fromFile(fakePdf).toString() })
             assertFalse(allDocs.any { it.title == "hidden_secret" })
@@ -330,26 +333,18 @@ class ScenarioAndPerformanceTest {
     }
 
     @Test
-    fun `DevicePermissionsHelper builds valid non-null intents for All Files and Battery Optimization`() = runBlocking {
+    fun `DevicePermissionsHelper builds valid non-null intent for All Files access`() = runBlocking {
         val allFilesIntent = DevicePermissionsHelper.buildAllFilesAccessIntent(context)
-        val batteryIntent = DevicePermissionsHelper.buildBatteryOptimizationIntent(context)
         assertTrue(!allFilesIntent.action.isNullOrBlank())
-        assertTrue(!batteryIntent.action.isNullOrBlank())
 
-        val vm = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+        val vm = AppViewModel(repository, preferencesRepository, indexRepo)
         val collectJob = launch(Dispatchers.Default) { vm.uiState.collect {} }
         try {
             vm.onPermissionsRefreshed(
-                DeviceAccessStatus(
-                    hasAllFilesAccess = false,
-                    isBatteryOptimizationIgnored = false
-                )
+                DeviceAccessStatus(hasAllFilesAccess = false)
             )
-            val updated = awaitState(vm) {
-                !it.hasAllFilesAccess && !it.isBatteryOptimizationIgnored
-            }
+            val updated = awaitState(vm) { !it.hasAllFilesAccess }
             assertFalse(updated.hasAllFilesAccess)
-            assertFalse(updated.isBatteryOptimizationIgnored)
         } finally {
             collectJob.cancel()
         }

@@ -1,10 +1,12 @@
 package com.example.data.repository
 
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.CancellationSignal
+import android.os.Environment
 import android.os.ParcelFileDescriptor
 import android.print.PageRange
 import android.print.PrintAttributes
@@ -13,28 +15,42 @@ import android.print.PrintDocumentInfo
 import android.print.PrintManager
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
+import com.example.R
+import com.example.data.UriAccess
 import com.example.data.local.AnnotationEntity
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.PdfDao
 import com.example.data.local.PdfDocumentEntity
 import com.example.data.model.AnnotationType
+import com.example.data.model.FolderKey
 import com.example.data.model.ReadingStatus
 import com.example.data.pdf.PdfEngine
 import com.example.data.pdf.SamplePdfGenerator
+import com.example.data.search.SearchIndexRepository
+import com.example.ui.theme.ContentColors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 
 class PdfLibraryRepository(
     private val context: Context,
     private val pdfDao: PdfDao,
-    val pdfEngine: PdfEngine
+    val pdfEngine: PdfEngine,
+    private val searchIndexRepository: SearchIndexRepository? = null
 ) {
     val allDocuments: Flow<List<PdfDocumentEntity>> = pdfDao.observeAllDocuments()
     val allBookmarks: Flow<List<BookmarkEntity>> = pdfDao.observeAllBookmarks()
     val allAnnotations: Flow<List<AnnotationEntity>> = pdfDao.observeAllAnnotations()
+
+    private val _missingUris = MutableStateFlow<Set<String>>(emptySet())
+    val missingUris: StateFlow<Set<String>> = _missingUris.asStateFlow()
 
     fun observeDocument(uriString: String): Flow<PdfDocumentEntity?> =
         pdfDao.observeDocument(uriString)
@@ -55,17 +71,17 @@ class PdfLibraryRepository(
             if (pdfDao.getDocument(guideUriString) == null) {
                 val pages = pdfEngine.inspectPageCount(guideUriString).coerceAtLeast(1)
                 val now = System.currentTimeMillis()
-                pdfDao.upsertDocument(
+                pdfDao.registerOrRefresh(
                     PdfDocumentEntity(
                         uriString = guideUriString,
                         title = SamplePdfGenerator.GUIDE_TITLE,
-                        folderName = "Guides & Manuals",
+                        folderName = FolderKey.virtual(context.getString(R.string.starter_guide_folder)),
                         fileSizeBytes = guideFile.length(),
                         pageCount = pages,
                         currentPage = 0,
-                        readingStatus = ReadingStatus.READING.name,
+                        readingStatus = ReadingStatus.TO_READ.name,
                         isFavorite = true,
-                        lastOpenedAt = now,
+                        lastOpenedAt = 0L,
                         addedAt = now
                     )
                 )
@@ -75,7 +91,7 @@ class PdfLibraryRepository(
                         documentUri = guideUriString,
                         documentTitle = SamplePdfGenerator.GUIDE_TITLE,
                         pageIndex = 1,
-                        title = "Every Tool, One Tap Away"
+                        title = context.getString(R.string.starter_bookmark_title)
                     )
                 )
                 pdfDao.insertAnnotation(
@@ -84,9 +100,9 @@ class PdfLibraryRepository(
                         documentTitle = SamplePdfGenerator.GUIDE_TITLE,
                         pageIndex = 0,
                         type = AnnotationType.HIGHLIGHT.name,
-                        quotedText = "Tap anywhere in the center of a page to enter True Edge-to-Edge Full-Screen Mode.",
-                        noteText = "Full-screen mode with floating edge shortcut pills.",
-                        colorHex = "#FACC15"
+                        quotedText = context.getString(R.string.starter_highlight_quote),
+                        noteText = context.getString(R.string.starter_highlight_note),
+                        colorHex = ContentColors.highlightYellowHex
                     )
                 )
             }
@@ -102,17 +118,17 @@ class PdfLibraryRepository(
             if (pdfDao.getDocument(archUriString) == null) {
                 val pages = pdfEngine.inspectPageCount(archUriString).coerceAtLeast(1)
                 val now = System.currentTimeMillis() - 3_600_000L
-                pdfDao.upsertDocument(
+                pdfDao.registerOrRefresh(
                     PdfDocumentEntity(
                         uriString = archUriString,
                         title = SamplePdfGenerator.ARCH_TITLE,
-                        folderName = "Books & Research",
+                        folderName = FolderKey.virtual(context.getString(R.string.starter_arch_folder)),
                         fileSizeBytes = archFile.length(),
                         pageCount = pages,
                         currentPage = 0,
                         readingStatus = ReadingStatus.TO_READ.name,
                         isFavorite = false,
-                        lastOpenedAt = now,
+                        lastOpenedAt = 0L,
                         addedAt = now
                     )
                 )
@@ -124,49 +140,113 @@ class PdfLibraryRepository(
         }
     }
 
-    suspend fun registerPickedDocument(uri: Uri, targetFolder: String? = null): PdfDocumentEntity =
+    suspend fun registerPickedDocument(
+        uri: Uri,
+        targetFolder: String? = null,
+        incognitoMode: Boolean = false
+    ): PdfDocumentEntity =
         withContext(Dispatchers.IO) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
+            val (displayName, fileSize, detectedFolder) = queryMetadata(uri)
+            val persisted = UriAccess.persistRead(context, uri)
+            val effectiveUri = if (persisted) {
+                uri
+            } else {
+                copyUriToPrivateStorage(uri, fileSize) ?: uri
             }
 
-            val uriString = uri.toString()
-            val existing = pdfDao.getDocument(uriString)
-            val (displayName, fileSize, detectedFolder) = queryMetadata(uri)
-            val folderName = targetFolder?.takeIf { it.isNotBlank() }
-                ?: existing?.folderName?.takeIf { it.isNotBlank() }
+            val uriString = effectiveUri.toString()
+            val effectiveSize = if (effectiveUri.scheme == ContentResolver.SCHEME_FILE) {
+                effectiveUri.path?.let { File(it).length() }?.takeIf { it > 0L } ?: fileSize
+            } else {
+                fileSize
+            }
+            val folderName = targetFolder?.takeIf { it.isNotBlank() }?.let { FolderKey.canonical(it) }
                 ?: detectedFolder
             val pageCount = pdfEngine.inspectPageCount(uriString)
             val now = System.currentTimeMillis()
 
-            val entity = if (existing != null) {
-                existing.copy(
-                    title = displayName.ifBlank { existing.title },
-                    folderName = folderName,
-                    fileSizeBytes = if (fileSize > 0L) fileSize else existing.fileSizeBytes,
-                    pageCount = if (pageCount > 0) pageCount else existing.pageCount,
-                    lastOpenedAt = now
-                )
-            } else {
-                PdfDocumentEntity(
-                    uriString = uriString,
-                    title = displayName.ifBlank { "Untitled PDF" },
-                    folderName = folderName,
-                    fileSizeBytes = fileSize,
-                    pageCount = pageCount,
-                    currentPage = 0,
-                    readingStatus = ReadingStatus.READING.name,
-                    lastOpenedAt = now,
-                    addedAt = now
-                )
-            }
+            val newDoc = PdfDocumentEntity(
+                uriString = uriString,
+                title = displayName.ifBlank { context.getString(R.string.untitled_pdf) },
+                folderName = folderName,
+                fileSizeBytes = effectiveSize,
+                pageCount = pageCount,
+                currentPage = 0,
+                readingStatus = ReadingStatus.TO_READ.name,
+                lastOpenedAt = if (incognitoMode) 0L else now,
+                addedAt = now
+            )
 
-            pdfDao.upsertDocument(entity)
-            entity
+            pdfDao.registerOrRefresh(newDoc)
+            if (!incognitoMode) {
+                pdfDao.updateLastOpenedAt(uriString, now)
+            }
+            _missingUris.update { it - uriString }
+            UriAccess.trimPersisted(context, pdfDao.getAllDocumentUris().toSet())
+            pdfDao.getDocument(uriString) ?: newDoc
         }
+
+    suspend fun refreshAvailability() = withContext(Dispatchers.IO) {
+        val docs = pdfDao.getAllDocumentUris()
+        val externalMounted = Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED
+        val internalFilesPath = context.filesDir.absolutePath
+        val internalCachePath = context.cacheDir.absolutePath
+        val missing = HashSet<String>()
+        for (rawUri in docs) {
+            val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: continue
+            if (uri.scheme == ContentResolver.SCHEME_FILE) {
+                val path = uri.path.orEmpty()
+                val isAppPrivate = path.startsWith(internalFilesPath) || path.startsWith(internalCachePath)
+                if (!isAppPrivate && !externalMounted) {
+                    continue
+                }
+            }
+            if (!UriAccess.isReadable(context, uri)) {
+                missing.add(rawUri)
+            }
+        }
+        _missingUris.value = missing
+    }
+
+    private fun copyUriToPrivateStorage(sourceUri: Uri, expectedSize: Long): Uri? {
+        return runCatching {
+            val dir = File(context.filesDir, "imported_pdfs")
+            if (!dir.exists()) dir.mkdirs()
+            val destFile = File(dir, "${sha256Hex(sourceUri.toString()).take(16)}.pdf")
+            if (destFile.exists() && expectedSize > 0L && destFile.length() == expectedSize) {
+                return Uri.fromFile(destFile)
+            }
+            val tmpFile = File(dir, "${destFile.name}.tmp")
+            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                FileOutputStream(tmpFile).use { output ->
+                    input.copyTo(output)
+                }
+            } ?: return null
+            if (tmpFile.length() <= 0L) {
+                tmpFile.delete()
+                return null
+            }
+            if (destFile.exists()) destFile.delete()
+            if (!tmpFile.renameTo(destFile)) {
+                tmpFile.copyTo(destFile, overwrite = true)
+                tmpFile.delete()
+            }
+            Uri.fromFile(destFile)
+        }.getOrNull()
+    }
+
+    private fun sha256Hex(input: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it) }
+    }
+
+    suspend fun markOpened(
+        uriString: String,
+        now: Long = System.currentTimeMillis(),
+        pageCount: Int = 0
+    ) = withContext(Dispatchers.IO) {
+        pdfDao.markOpened(uriString = uriString, now = now, pageCount = pageCount)
+    }
 
     suspend fun updateProgress(
         uriString: String,
@@ -176,20 +256,12 @@ class PdfLibraryRepository(
         incognitoMode: Boolean = false
     ) = withContext(Dispatchers.IO) {
         if (incognitoMode) return@withContext
-        val existing = pdfDao.getDocument(uriString)
-        val computedStatus = when {
-            existing?.status == ReadingStatus.ON_HOLD -> ReadingStatus.ON_HOLD
-            existing?.status == ReadingStatus.ABANDONED -> ReadingStatus.ABANDONED
-            pageCount > 0 && currentPage >= pageCount - 1 -> ReadingStatus.COMPLETED
-            else -> ReadingStatus.READING
-        }
-        pdfDao.updateReadingProgress(
+        pdfDao.updateProgressTransactional(
             uriString = uriString,
-            page = currentPage.coerceAtLeast(0),
-            pageCount = pageCount.coerceAtLeast(existing?.pageCount ?: 0),
-            zoomScale = zoomScale.coerceIn(1f, 5f),
-            timestamp = System.currentTimeMillis(),
-            status = computedStatus.name
+            currentPage = currentPage,
+            pageCount = pageCount,
+            zoomScale = zoomScale,
+            timestamp = System.currentTimeMillis()
         )
     }
 
@@ -198,7 +270,7 @@ class PdfLibraryRepository(
     }
 
     suspend fun moveDocumentToFolder(uriString: String, folderName: String) {
-        val clean = folderName.trim().ifBlank { "Downloads" }
+        val clean = FolderKey.canonical(folderName)
         pdfDao.updateDocumentFolder(uriString, clean)
     }
 
@@ -208,10 +280,17 @@ class PdfLibraryRepository(
 
     suspend fun removeDocument(uriString: String) {
         pdfDao.deleteDocument(uriString)
+        _missingUris.update { it - uriString }
+        searchIndexRepository?.remove(uriString)
     }
 
     suspend fun clearAllHistory() {
         pdfDao.clearAllLibraryData()
+        searchIndexRepository?.clearAll()
+    }
+
+    suspend fun runOneTimeLastOpenedRepair(): Int = withContext(Dispatchers.IO) {
+        pdfDao.repairFalseLastOpenedTimestamps()
     }
 
     suspend fun addBookmark(
@@ -220,7 +299,9 @@ class PdfLibraryRepository(
         pageIndex: Int,
         customTitle: String
     ): Long {
-        val cleanTitle = customTitle.trim().ifBlank { "Page ${pageIndex + 1}" }
+        val cleanTitle = customTitle.trim().ifBlank {
+            context.getString(R.string.page_badge_short, pageIndex + 1)
+        }
         return pdfDao.insertBookmark(
             BookmarkEntity(
                 documentUri = documentUri,
@@ -267,6 +348,26 @@ class PdfLibraryRepository(
                 colorHex = colorHex,
                 signatureVectorData = signatureVectorData
             )
+        )
+    }
+
+    suspend fun stampSignatureAnnotation(
+        documentUri: String,
+        documentTitle: String,
+        pageIndex: Int,
+        signerLabel: String,
+        colorHex: String,
+        signatureVectorData: String
+    ): Long {
+        return addAnnotation(
+            documentUri = documentUri,
+            documentTitle = documentTitle,
+            pageIndex = pageIndex,
+            type = AnnotationType.SIGNATURE,
+            quotedText = signerLabel.ifBlank { context.getString(R.string.reader_signature_default_label) },
+            noteText = context.getString(R.string.reader_signed_on_page, pageIndex + 1),
+            colorHex = colorHex,
+            signatureVectorData = signatureVectorData
         )
     }
 
@@ -341,7 +442,9 @@ class PdfLibraryRepository(
                     }
                     callback.onWriteFinished(arrayOf(PageRange.ALL_PAGES))
                 }.onFailure { err ->
-                    callback.onWriteFailed(err.localizedMessage ?: "Print failed")
+                    callback.onWriteFailed(
+                        err.localizedMessage ?: context.getString(R.string.print_failed)
+                    )
                 }
             }
         }
@@ -356,7 +459,9 @@ class PdfLibraryRepository(
         if (!savedTitle.isNullOrBlank()) return@withContext savedTitle
         val uri = Uri.parse(uriString)
         val (displayName, _, _) = queryMetadata(uri)
-        displayName.trim().ifBlank { fallbackTitleFromUri(uriString) }
+        displayName.trim().ifBlank {
+            fallbackTitleFromUri(uriString).ifBlank { context.getString(R.string.reader_default_title) }
+        }
     }
 
     fun fallbackTitleFromUri(uriString: String): String {
@@ -386,8 +491,11 @@ class PdfLibraryRepository(
                 rawName.dropLast(4)
             } else {
                 rawName
-            }.trim().ifBlank { "PDF Document" }
-            val parentFolder = file.parentFile?.name?.takeIf { it.isNotBlank() } ?: "Internal Storage"
+            }.trim().ifBlank { context.getString(R.string.reader_default_title) }
+            val parentPath = file.parentFile?.let { parent ->
+                runCatching { parent.canonicalPath }.getOrElse { parent.absolutePath }
+            }
+            val parentFolder = FolderKey.device(parentPath)
             return Triple(cleanName, file.length(), parentFolder)
         }
 
@@ -415,14 +523,31 @@ class PdfLibraryRepository(
         } else {
             trimmedName
         }).trim().ifBlank {
-            fallbackTitleFromUri(uri.toString()).ifBlank { "PDF Document" }
+            fallbackTitleFromUri(uri.toString()).ifBlank { context.getString(R.string.reader_default_title) }
         }
 
-        val rawSegment = Uri.decode(uri.lastPathSegment ?: "")
-        val parentFolder = when {
-            rawSegment.contains('/') -> rawSegment.substringBeforeLast('/').substringAfterLast('/').ifBlank { "Downloads" }
-            uri.authority?.contains("downloads", ignoreCase = true) == true -> "Downloads"
-            else -> "Documents"
+        val rawSegment = runCatching { Uri.decode(uri.lastPathSegment ?: "") }.getOrDefault("")
+        val parentFolder = if (rawSegment.contains('/')) {
+            val relPath = rawSegment.substringAfter(':', rawSegment).substringBeforeLast('/').trim('/')
+            if (relPath.isNotBlank()) {
+                @Suppress("DEPRECATION")
+                val externalRoot = if (uri.authority == "com.android.externalstorage.documents" &&
+                    rawSegment.startsWith("primary:")
+                ) {
+                    runCatching { Environment.getExternalStorageDirectory()?.absolutePath }.getOrNull()
+                } else {
+                    null
+                }
+                if (!externalRoot.isNullOrBlank()) {
+                    FolderKey.device("$externalRoot/$relPath")
+                } else {
+                    FolderKey.device(relPath)
+                }
+            } else {
+                FolderKey.IMPORTED
+            }
+        } else {
+            FolderKey.IMPORTED
         }
 
         return Triple(cleanName, size, parentFolder)

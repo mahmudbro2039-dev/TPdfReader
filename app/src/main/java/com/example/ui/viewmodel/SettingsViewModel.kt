@@ -14,27 +14,64 @@ import com.example.data.pdf.DevicePdfScanner
 import com.example.data.pdf.PdfEngine
 import com.example.data.pdf.PdfScanProgress
 import com.example.data.repository.PdfLibraryRepository
+import com.example.data.search.PauseReason
+import com.example.data.search.SearchIndexRepository
+import com.example.data.search.SearchIndexer
+import com.example.data.search.db.IndexStatus
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class SearchIndexUiStatus(
+    val doneCount: Int = 0,
+    val totalCount: Int = 0,
+    val pauseReason: PauseReason? = null
+)
 
 class SettingsViewModel(
     private val preferencesRepository: PreferencesRepository,
     private val libraryRepository: PdfLibraryRepository,
     private val pdfEngine: PdfEngine,
-    private val devicePdfScanner: DevicePdfScanner? = null
+    private val devicePdfScanner: DevicePdfScanner? = null,
+    private val searchIndexRepository: SearchIndexRepository? = null,
+    private val searchIndexer: SearchIndexer? = null,
+    private val appScope: CoroutineScope? = null,
+    initialPreferences: UserPreferences = UserPreferences()
 ) : ViewModel() {
 
     val scanProgress: StateFlow<PdfScanProgress> =
         devicePdfScanner?.progress ?: MutableStateFlow(PdfScanProgress())
 
+    val searchIndexStatus: StateFlow<SearchIndexUiStatus> = combine(
+        libraryRepository.allDocuments,
+        searchIndexRepository?.observeAllDocs() ?: flowOf(emptyList()),
+        searchIndexer?.pauseReason ?: MutableStateFlow(null)
+    ) { docs, indexedDocs, pauseReason ->
+        val libraryUris = docs.mapTo(HashSet()) { it.uriString }
+        val doneCount = indexedDocs.count {
+            it.uriString in libraryUris && it.status == IndexStatus.DONE
+        }
+        SearchIndexUiStatus(
+            doneCount = doneCount,
+            totalCount = docs.size,
+            pauseReason = pauseReason
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = SearchIndexUiStatus()
+    )
+
     val preferences: StateFlow<UserPreferences> = preferencesRepository.preferencesFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = UserPreferences()
+            initialValue = initialPreferences
         )
 
     fun setAppThemeMode(mode: AppThemeMode) = viewModelScope.launch {
@@ -108,7 +145,16 @@ class SettingsViewModel(
         val scanner = devicePdfScanner ?: return
         viewModelScope.launch {
             val result = scanner.scanDevicePdfs()
+            libraryRepository.refreshAvailability()
             onDone(result)
+        }
+    }
+
+    fun rebuildSearchIndex() {
+        val indexer = searchIndexer ?: return
+        val scope = appScope ?: return
+        scope.launch {
+            indexer.rebuildAll()
         }
     }
 
@@ -117,7 +163,11 @@ class SettingsViewModel(
             preferencesRepository: PreferencesRepository,
             libraryRepository: PdfLibraryRepository,
             pdfEngine: PdfEngine,
-            devicePdfScanner: DevicePdfScanner? = null
+            devicePdfScanner: DevicePdfScanner? = null,
+            searchIndexRepository: SearchIndexRepository? = null,
+            searchIndexer: SearchIndexer? = null,
+            appScope: CoroutineScope? = null,
+            initialPreferences: UserPreferences = UserPreferences()
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -125,7 +175,11 @@ class SettingsViewModel(
                     preferencesRepository = preferencesRepository,
                     libraryRepository = libraryRepository,
                     pdfEngine = pdfEngine,
-                    devicePdfScanner = devicePdfScanner
+                    devicePdfScanner = devicePdfScanner,
+                    searchIndexRepository = searchIndexRepository,
+                    searchIndexer = searchIndexer,
+                    appScope = appScope,
+                    initialPreferences = initialPreferences
                 ) as T
             }
         }

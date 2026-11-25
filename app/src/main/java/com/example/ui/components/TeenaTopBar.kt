@@ -74,6 +74,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import com.example.R
 import com.example.ui.model.ViewMode
+import com.example.ui.theme.Alpha
 import com.example.ui.theme.Brand
 import com.example.ui.theme.TeenaTheme
 
@@ -270,7 +271,11 @@ fun TeenaSearchField(
 
     val activeText = textFieldValue.text
     val isActive = isFocused || activeText.isNotEmpty()
-    val borderColor = if (isFocused) cs.primary.copy(alpha = 0.55f) else c.hairline.copy(alpha = 0.7f)
+    val borderColor = if (isFocused) {
+        cs.primary.copy(alpha = Alpha.medium)
+    } else {
+        c.hairline.copy(alpha = Alpha.secondaryContent)
+    }
     val searchPillBg = if (isActive) cs.primaryContainer else cs.surfaceVariant
     val searchIconTint = if (isActive) cs.primary else cs.onSurfaceVariant
 
@@ -326,7 +331,7 @@ fun TeenaSearchField(
                             softWrap = false,
                             overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = cs.onSurfaceVariant.copy(alpha = 0.75f)
+                            color = cs.onSurfaceVariant.copy(alpha = Alpha.placeholder)
                         )
                     }
                     Box(modifier = Modifier.fillMaxWidth()) {

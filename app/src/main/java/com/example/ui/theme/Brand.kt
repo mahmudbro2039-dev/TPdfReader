@@ -17,4 +17,5 @@ object Brand {
 
     const val NAME_STRONG = "Teena"
     const val NAME_LIGHT  = "Reader"
+    const val NAME        = "$NAME_STRONG$NAME_LIGHT"
 }

@@ -102,7 +102,8 @@ data class Sizes(
     val edgeHandleHeight: Dp = 56.dp,
     val edgeSwipeStripWidth: Dp = 28.dp,
     val fullscreenBadgeSize: Dp = 36.dp,
-    val quickMenuTileSize: Dp = 44.dp
+    val quickMenuTileSize: Dp = 44.dp,
+    val thumbAspectRatio: Float = 1f / A4_RATIO
 )
 
 @Immutable
@@ -134,6 +135,38 @@ data class Motion(
         animation = tween(durationMillis = shimmer),
         repeatMode = RepeatMode.Reverse
     )
+}
+
+object Alpha {
+    const val subtleStroke: Float = 0.28f
+    const val shimmerMin: Float = 0.4f
+    const val missing: Float = 0.45f
+    const val borderMuted: Float = missing
+    const val surfaceTint: Float = 0.5f
+    const val medium: Float = 0.55f
+    const val cardSurface: Float = 0.6f
+    const val secondaryContent: Float = 0.7f
+    const val edgeHandleSurface: Float = 0.72f
+    const val placeholder: Float = 0.75f
+    const val floatingControl: Float = 0.78f
+    const val hudPill: Float = 0.82f
+    const val strongContent: Float = 0.85f
+    const val edgeHandle: Float = 0.86f
+    const val stampSurface: Float = 0.88f
+    const val high: Float = 0.9f
+    const val elevatedPill: Float = 0.92f
+    const val overlayMenu: Float = 0.94f
+    const val overlayPanel: Float = 0.96f
+    const val navExitMin: Float = 0.99f
+}
+
+object ReaderZoomTokens {
+    const val ZoomMin: Float = 1f
+    const val ZoomMax: Float = 5f
+    const val SharpThreshold: Float = 1.2f
+    const val SharpSettleMs: Long = 250L
+    const val RegionMaxPixels: Int = 6_000_000
+    const val MaxSharpPages: Int = 2
 }
 
 const val A4_RATIO = 1.414f

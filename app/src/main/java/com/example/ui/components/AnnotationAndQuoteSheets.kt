@@ -84,6 +84,7 @@ import com.example.data.model.HighlightColorOption
 import com.example.data.model.QuoteCardTheme
 import com.example.data.pdf.DocumentLinkEntry
 import com.example.data.pdf.QuoteCardRenderer
+import com.example.ui.theme.Alpha
 import com.example.ui.theme.TeenaTheme
 import kotlinx.coroutines.launch
 
@@ -105,10 +106,11 @@ fun AnnotationsBottomSheet(
 
     var selectedTab by remember { mutableIntStateOf(0) }
     var hasEditedQuote by remember(currentPage) { mutableStateOf(false) }
-    var quoteInput by remember(currentPage) {
+    val defaultQuote = stringResource(R.string.reader_highlight_default_quote, currentPage + 1)
+    var quoteInput by remember(currentPage, defaultQuote) {
         mutableStateOf(
             currentPageTextSnippet.lines().firstOrNull { it.length > 24 }?.take(180)
-                ?: "Highlighted passage on Page ${currentPage + 1}"
+                ?: defaultQuote
         )
     }
     LaunchedEffect(currentPageTextSnippet, currentPage) {
@@ -147,7 +149,7 @@ fun AnnotationsBottomSheet(
             Spacer(modifier = Modifier.height(s.md))
 
             Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = Alpha.surfaceTint),
                 shape = MaterialTheme.shapes.medium,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -210,7 +212,7 @@ fun AnnotationsBottomSheet(
                                     if (isSelected) {
                                         Icon(
                                             imageVector = Icons.Filled.Check,
-                                            contentDescription = option.label,
+                                            contentDescription = stringResource(option.labelRes),
                                             tint = readerColors.textLightFg,
                                             modifier = Modifier.size(sz.iconSm)
                                         )
@@ -339,7 +341,11 @@ fun AnnotationItemCard(
             Spacer(modifier = Modifier.width(s.md))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "${annotation.annotationType.label.uppercase()}  ·  ${stringResource(R.string.page_badge_short, annotation.pageIndex + 1).uppercase()}",
+                    text = stringResource(
+                        R.string.reader_annotation_card_header,
+                        stringResource(annotation.annotationType.labelRes).uppercase(),
+                        stringResource(R.string.page_badge_short, annotation.pageIndex + 1).uppercase()
+                    ),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary
                 )
@@ -355,7 +361,7 @@ fun AnnotationItemCard(
                 } else if (annotation.quotedText.isNotBlank()) {
                     Spacer(modifier = Modifier.height(s.xxs))
                     Text(
-                        text = "“${annotation.quotedText}”",
+                        text = stringResource(R.string.reader_quoted_passage, annotation.quotedText),
                         style = MaterialTheme.typography.bodySmall,
                         fontStyle = FontStyle.Italic,
                         maxLines = 2,
@@ -461,7 +467,7 @@ fun SignaturePadBottomSheet(
                     .height(sz.signaturePadHeight)
                     .border(
                         width = sz.borderThick,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f),
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = Alpha.borderMuted),
                         shape = MaterialTheme.shapes.large
                     )
                     .pointerInput(Unit) {
@@ -543,10 +549,11 @@ fun SignaturePadBottomSheet(
                     Text(stringResource(R.string.reader_signature_clear))
                 }
 
+                val defaultSignedLabel = stringResource(R.string.reader_signature_signed)
                 Button(
                     onClick = {
                         if (serialized.isNotBlank()) {
-                            onStampSignature(serialized, signerLabel.ifBlank { "Signed" })
+                            onStampSignature(serialized, signerLabel.ifBlank { defaultSignedLabel })
                             onDismiss()
                         }
                     },
@@ -579,18 +586,16 @@ fun ShareQuoteBottomSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    var quoteText by remember(initialQuoteText) {
-        mutableStateOf(
-            initialQuoteText.trim().ifBlank {
-                "Great reading software disappears behind the content, putting your document and ideas first."
-            }
-        )
+    val fallbackQuoteText = stringResource(R.string.reader_quote_fallback)
+    var quoteText by remember(initialQuoteText, fallbackQuoteText) {
+        mutableStateOf(initialQuoteText.trim().ifBlank { fallbackQuoteText })
     }
     var selectedTheme by remember { mutableStateOf(QuoteCardTheme.LIGHT) }
     var renderedBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(quoteText, bookTitle, pageNumber, selectedTheme) {
         renderedBitmap = QuoteCardRenderer.renderQuoteBitmap(
+            context = context,
             quoteText = quoteText,
             bookTitle = bookTitle,
             pageNumber = pageNumber,
@@ -623,7 +628,7 @@ fun ShareQuoteBottomSheet(
                     FilterChip(
                         selected = selectedTheme == theme,
                         onClick = { selectedTheme = theme },
-                        label = { Text(theme.label) }
+                        label = { Text(stringResource(theme.labelRes)) }
                     )
                 }
             }
@@ -772,7 +777,11 @@ fun DocumentLinksBottomSheet(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${entry.urlOrTarget}  ·  ${stringResource(R.string.page_badge_short, entry.pageIndex + 1)}",
+                                    text = stringResource(
+                                        R.string.reader_link_meta_format,
+                                        entry.urlOrTarget,
+                                        stringResource(R.string.page_badge_short, entry.pageIndex + 1)
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,

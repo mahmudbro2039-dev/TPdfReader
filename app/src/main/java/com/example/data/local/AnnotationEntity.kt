@@ -5,6 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.data.model.AnnotationType
+import com.example.ui.theme.ContentColors
 
 @Entity(
     tableName = "annotations",
@@ -27,7 +28,7 @@ data class AnnotationEntity(
     val type: String = AnnotationType.HIGHLIGHT.name,
     val quotedText: String = "",
     val noteText: String = "",
-    val colorHex: String = "#FACC15",
+    val colorHex: String = ContentColors.highlightYellowHex,
     /**
      * Serialized vector strokes for handwritten signatures ("x1,y1;x2,y2|x1,y1;x2,y2")
      * normalized to 0..1 coordinates so vector signatures render sharply at any resolution.

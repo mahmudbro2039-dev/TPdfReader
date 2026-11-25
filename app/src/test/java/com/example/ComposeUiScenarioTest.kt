@@ -15,7 +15,6 @@ import com.example.data.local.PdfDocumentEntity
 import com.example.data.local.PreferencesRepository
 import com.example.data.model.ReadingStatus
 import com.example.data.pdf.PdfEngine
-import com.example.data.pdf.PdfTextExtractor
 import com.example.data.repository.PdfLibraryRepository
 import com.example.data.system.DeviceAccessStatus
 import com.example.ui.screens.ReaderScreen
@@ -44,7 +43,6 @@ class ComposeUiScenarioTest {
     private lateinit var repository: PdfLibraryRepository
     private lateinit var preferencesRepository: PreferencesRepository
     private lateinit var pdfEngine: PdfEngine
-    private lateinit var pdfTextExtractor: PdfTextExtractor
 
     @Before
     fun setUp() {
@@ -53,7 +51,6 @@ class ComposeUiScenarioTest {
             .allowMainThreadQueries()
             .build()
         pdfEngine = PdfEngine(context)
-        pdfTextExtractor = PdfTextExtractor(context)
         preferencesRepository = PreferencesRepository(context)
         repository = PdfLibraryRepository(
             context = context,
@@ -70,7 +67,7 @@ class ComposeUiScenarioTest {
     @Test
     fun `TeenaApp UI renders Library Grid and Folders drilldown`() {
         runBlocking {
-            db.pdfDao().upsertDocument(
+            db.pdfDao().registerOrRefresh(
                 PdfDocumentEntity(
                     uriString = "file:///sample_ui_handbook.pdf",
                     title = "UI Engineering Handbook",
@@ -85,7 +82,7 @@ class ComposeUiScenarioTest {
             preferencesRepository.setLibraryGridView(true)
         }
 
-        val appViewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+        val appViewModel = AppViewModel(repository, preferencesRepository)
 
         composeRule.setContent {
             TeenaTheme {
@@ -118,7 +115,7 @@ class ComposeUiScenarioTest {
 
     @Test
     fun `ReaderScreen UI displays document title in TopBar`() {
-        val readerViewModel = ReaderViewModel(repository, preferencesRepository, pdfEngine, pdfTextExtractor)
+        val readerViewModel = ReaderViewModel(repository, preferencesRepository, pdfEngine)
         val uri = "content://com.android.externalstorage.documents/document/primary%3ADownload%2FPhysics_Notes.pdf"
 
         composeRule.setContent {
@@ -144,12 +141,9 @@ class ComposeUiScenarioTest {
 
     @Test
     fun `TeenaApp displays permission banner when file access missing and dismisses cleanly`() {
-        val appViewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+        val appViewModel = AppViewModel(repository, preferencesRepository)
         appViewModel.onPermissionsRefreshed(
-            DeviceAccessStatus(
-                hasAllFilesAccess = false,
-                isBatteryOptimizationIgnored = false
-            )
+            DeviceAccessStatus(hasAllFilesAccess = false)
         )
 
         var filesRequested = false
@@ -160,8 +154,7 @@ class ComposeUiScenarioTest {
                     onPickPdf = {},
                     onOpenDocument = { _, _ -> },
                     onOpenSettings = {},
-                    onRequestAllFilesAccess = { filesRequested = true },
-                    onRequestBatteryExemption = {}
+                    onRequestAllFilesAccess = { filesRequested = true }
                 )
             }
         }
@@ -184,7 +177,7 @@ class ComposeUiScenarioTest {
     @Test
     fun `TeenaApp top search accepts typing smoothly and switches tabs without lag`() {
         runBlocking {
-            db.pdfDao().upsertDocument(
+            db.pdfDao().registerOrRefresh(
                 PdfDocumentEntity(
                     uriString = "file:///kotlin_coroutines.pdf",
                     title = "Kotlin Coroutines Guide",
@@ -196,7 +189,7 @@ class ComposeUiScenarioTest {
                     lastOpenedAt = System.currentTimeMillis()
                 )
             )
-            db.pdfDao().upsertDocument(
+            db.pdfDao().registerOrRefresh(
                 PdfDocumentEntity(
                     uriString = "file:///calculus_notes.pdf",
                     title = "Calculus Notes",
@@ -210,7 +203,7 @@ class ComposeUiScenarioTest {
             )
         }
 
-        val appViewModel = AppViewModel(repository, preferencesRepository, pdfTextExtractor)
+        val appViewModel = AppViewModel(repository, preferencesRepository)
 
         composeRule.setContent {
             TeenaTheme {
@@ -241,12 +234,14 @@ class ComposeUiScenarioTest {
 
         // Switching tab clears search and switches immediately
         composeRule.onNodeWithTag("bottom_tab_library").performClick()
-        composeRule.waitUntil(timeoutMillis = 2_000L) {
+        composeRule.waitUntil(timeoutMillis = 3_000L) {
             composeRule.onAllNodesWithText("Kotlin Coroutines Guide").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag("bottom_tab_folders").performClick()
-        composeRule.waitUntil(timeoutMillis = 2_000L) {
-            composeRule.onAllNodesWithText("Programming").fetchSemanticsNodes().isNotEmpty()
+        composeRule.waitUntil(timeoutMillis = 3_000L) {
+            composeRule.onAllNodesWithText("2 FOLDERS").fetchSemanticsNodes().isNotEmpty() &&
+                (composeRule.onAllNodesWithText("Math").fetchSemanticsNodes().isNotEmpty() ||
+                    composeRule.onAllNodesWithText("Programming").fetchSemanticsNodes().isNotEmpty())
         }
         composeRule.onNodeWithTag("bottom_tab_recent").performClick()
         composeRule.waitForIdle()

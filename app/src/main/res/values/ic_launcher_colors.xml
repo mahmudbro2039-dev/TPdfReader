@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Must stay in sync with Brand.accentLight in ui/theme/Brand.kt -->
+    <color name="ic_launcher_background">#2B5B84</color>
+    <color name="ic_launcher_foreground">#FFFFFF</color>
+</resources>

@@ -26,14 +26,15 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Density
 import com.example.R
+import com.example.data.model.ReadingProgress
 import com.example.ui.theme.TeenaBadgeNumberStyle
 import com.example.ui.theme.TeenaTheme
-import kotlin.math.roundToInt
 
 @Composable
 fun CircularProgressBadge(
     progress: Float,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    percent: Int = ReadingProgress.percent(progress.coerceIn(0f, 1f))
 ) {
     val sz = TeenaTheme.sizes
     val c = TeenaTheme.colors
@@ -43,7 +44,6 @@ fun CircularProgressBadge(
         animationSpec = TeenaTheme.motion.slowSpec(),
         label = "ring"
     )
-    val percent = (clamped * 100f).roundToInt()
     val track = c.badgeTrack
     val fill = c.badgeFill
     val density = LocalDensity.current
@@ -94,7 +94,7 @@ fun CircularProgressBadge(
                 LocalDensity provides Density(density = density.density, fontScale = 1f)
             ) {
                 Text(
-                    text = "$percent",
+                    text = percent.toString(),
                     maxLines = 1,
                     softWrap = false,
                     color = c.badgeText,

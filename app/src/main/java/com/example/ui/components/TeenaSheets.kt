@@ -10,36 +10,33 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bookmark
+import androidx.compose.material.icons.rounded.CreateNewFolder
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.DocumentScanner
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.PushPin
+import androidx.compose.material.icons.rounded.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,11 +46,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import com.example.R
-import com.example.ui.model.AnnotationUiItem
-import com.example.ui.model.BookmarkUiItem
+import com.example.data.model.FolderKey
+import com.example.data.model.ReadingStatus
+import com.example.data.ocr.OcrState
+import com.example.data.search.db.IndexStatus
+import com.example.data.search.db.IndexedDocEntity
+import com.example.ui.model.FolderItem
 import com.example.ui.model.PdfItem
 import com.example.ui.model.SortOrder
-import com.example.ui.theme.ReadingStatus
 import com.example.ui.theme.TeenaTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -125,16 +125,37 @@ fun SortBottomSheet(
 @Composable
 fun DocumentActionsSheet(
     item: PdfItem,
-    existingFolders: List<String>,
+    existingFolders: List<FolderItem>,
+    indexedDoc: IndexedDocEntity? = null,
+    ocrState: OcrState = OcrState.Idle,
     onDismiss: () -> Unit,
     onTogglePin: () -> Unit,
     onSelectStatus: (ReadingStatus) -> Unit,
     onMoveToFolder: (String) -> Unit,
+    onStartOcr: () -> Unit = {},
+    onStopOcr: () -> Unit = {},
     onRemove: () -> Unit
 ) {
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
     val cs = MaterialTheme.colorScheme
+    var showNewFolderDialog by remember { mutableStateOf(false) }
+    var newFolderInput by remember { mutableStateOf("") }
+    val itemFolderKey = remember(item.folderName) { FolderKey.canonical(item.folderName) }
+    val importedLabel = stringResource(R.string.folder_imported)
+    val folderChoices = remember(existingFolders, importedLabel) {
+        if (existingFolders.any { it.key == FolderKey.IMPORTED }) {
+            existingFolders
+        } else {
+            existingFolders + FolderItem(
+                key = FolderKey.IMPORTED,
+                name = importedLabel,
+                pdfCount = 0,
+                totalSizeBytes = 0L,
+                lastUpdatedAt = 0L
+            )
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -158,7 +179,11 @@ fun DocumentActionsSheet(
                 Text(
                     text = stringResource(
                         R.string.folder_meta_format,
-                        stringResource(R.string.page_of, item.currentPage, item.totalPages),
+                        if (item.hasBeenOpened && item.totalPages > 0) {
+                            stringResource(R.string.page_of, item.currentPage, item.totalPages)
+                        } else {
+                            stringResource(R.string.file_size_local)
+                        },
                         formatFileSize(item.sizeBytes)
                     ),
                     style = MaterialTheme.typography.bodySmall,
@@ -183,10 +208,11 @@ fun DocumentActionsSheet(
                 ) { status ->
                     val label = stringResource(
                         when (status) {
-                            ReadingStatus.ToRead -> R.string.status_to_read
-                            ReadingStatus.Reading -> R.string.status_reading
-                            ReadingStatus.Completed -> R.string.status_completed
-                            ReadingStatus.OnHold -> R.string.status_on_hold
+                            ReadingStatus.TO_READ -> R.string.status_to_read
+                            ReadingStatus.READING -> R.string.status_reading
+                            ReadingStatus.ON_HOLD -> R.string.status_on_hold
+                            ReadingStatus.COMPLETED -> R.string.status_completed
+                            ReadingStatus.ABANDONED -> R.string.status_abandoned
                         }
                     )
                     FilterChip(
@@ -201,37 +227,69 @@ fun DocumentActionsSheet(
                 }
             }
 
-            if (existingFolders.size > 1) {
-                Text(
-                    text = stringResource(R.string.move_to_folder),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = cs.onSurfaceVariant
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-                    items(
-                        items = existingFolders,
-                        key = { it },
-                        contentType = { "folder_option" }
-                    ) { folder ->
-                        FilterChip(
-                            selected = item.folderName.equals(folder, ignoreCase = true),
-                            onClick = {
-                                onMoveToFolder(folder)
-                                onDismiss()
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Rounded.Folder,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(sz.iconSm)
-                                )
-                            },
-                            label = { Text(folder, style = MaterialTheme.typography.labelMedium) },
-                            shape = CircleShape
-                        )
+            Text(
+                text = stringResource(R.string.move_to_folder),
+                style = MaterialTheme.typography.labelSmall,
+                color = cs.onSurfaceVariant
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+                items(
+                    items = folderChoices,
+                    key = { it.key },
+                    contentType = { "folder_option" }
+                ) { folder ->
+                    val label = if (folder.key == FolderKey.IMPORTED) {
+                        importedLabel
+                    } else {
+                        folder.name.ifBlank { importedLabel }
                     }
+                    FilterChip(
+                        selected = itemFolderKey == folder.key,
+                        onClick = {
+                            onMoveToFolder(folder.key)
+                            onDismiss()
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Folder,
+                                contentDescription = null,
+                                modifier = Modifier.size(sz.iconSm)
+                            )
+                        },
+                        label = { Text(label, style = MaterialTheme.typography.labelMedium) },
+                        shape = CircleShape
+                    )
+                }
+                item(key = "new_virtual_folder", contentType = "new_folder_option") {
+                    FilterChip(
+                        selected = false,
+                        onClick = {
+                            newFolderInput = ""
+                            showNewFolderDialog = true
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.CreateNewFolder,
+                                contentDescription = null,
+                                modifier = Modifier.size(sz.iconSm)
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = stringResource(R.string.folder_new),
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        },
+                        shape = CircleShape,
+                        modifier = Modifier.testTag("new_folder_chip")
+                    )
                 }
             }
+            Text(
+                text = stringResource(R.string.folder_move_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = cs.onSurfaceVariant
+            )
 
             HorizontalDivider(thickness = sz.hairline, color = TeenaTheme.colors.hairline)
 
@@ -257,6 +315,70 @@ fun DocumentActionsSheet(
                     style = MaterialTheme.typography.bodyLarge,
                     color = cs.onSurface
                 )
+            }
+
+            val runningOcrForDoc = ocrState as? OcrState.Running
+            val isOcrRunningForDoc = runningOcrForDoc?.uri == item.uri
+            val canStartOcr = indexedDoc != null &&
+                indexedDoc.status == IndexStatus.DONE &&
+                indexedDoc.textPages < indexedDoc.pageCount &&
+                !indexedDoc.ocrFinished
+
+            if (isOcrRunningForDoc && runningOcrForDoc != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onStopOcr() }
+                        .padding(vertical = s.md, horizontal = s.xs)
+                        .testTag("action_stop_ocr"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(s.md)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.StopCircle,
+                        contentDescription = null,
+                        tint = cs.primary
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(s.xxs)) {
+                        Text(
+                            text = stringResource(R.string.action_stop_ocr),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = cs.onSurface
+                        )
+                        Text(
+                            text = stringResource(
+                                R.string.ocr_progress,
+                                runningOcrForDoc.page,
+                                runningOcrForDoc.total
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant
+                        )
+                    }
+                }
+            } else if (canStartOcr) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .clickable { onStartOcr() }
+                        .padding(vertical = s.md, horizontal = s.xs)
+                        .testTag("action_make_searchable"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(s.md)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.DocumentScanner,
+                        contentDescription = null,
+                        tint = cs.primary
+                    )
+                    Text(
+                        text = stringResource(R.string.action_make_searchable),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = cs.onSurface
+                    )
+                }
             }
 
             Row(
@@ -285,216 +407,55 @@ fun DocumentActionsSheet(
             Spacer(Modifier.height(s.lg))
         }
     }
-}
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun NotesAndHighlightsSheet(
-    annotations: List<AnnotationUiItem>,
-    bookmarks: List<BookmarkUiItem>,
-    onOpenDocumentPage: (uri: String, pageIndex: Int) -> Unit,
-    onDeleteAnnotation: (Long) -> Unit,
-    onDeleteBookmark: (Long) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val s = TeenaTheme.spacing
-    val sz = TeenaTheme.sizes
-    val cs = MaterialTheme.colorScheme
-    var selectedTab by remember { mutableIntStateOf(0) }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = cs.surface,
-        shape = MaterialTheme.shapes.extraLarge
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = s.lg)
-        ) {
-            Text(
-                text = stringResource(R.string.notes_highlights),
-                style = MaterialTheme.typography.titleLarge,
-                color = cs.onSurface,
-                modifier = Modifier.padding(bottom = s.sm)
-            )
-            PrimaryTabRow(
-                selectedTabIndex = selectedTab,
-                containerColor = cs.surface
-            ) {
-                Tab(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    text = { Text(stringResource(R.string.tab_highlights_label)) }
+    if (showNewFolderDialog) {
+        val trimmedName = newFolderInput.trim()
+        val isValidName = trimmedName.length in 1..40
+        AlertDialog(
+            onDismissRequest = { showNewFolderDialog = false },
+            containerColor = cs.surface,
+            title = {
+                Text(
+                    text = stringResource(R.string.folder_new_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = cs.onSurface
                 )
-                Tab(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    text = { Text(stringResource(R.string.tab_bookmarks_label)) }
+            },
+            text = {
+                OutlinedTextField(
+                    value = newFolderInput,
+                    onValueChange = { next ->
+                        if (next.length <= 40) newFolderInput = next
+                    },
+                    singleLine = true,
+                    placeholder = { Text(stringResource(R.string.folder_new_hint)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("new_folder_name_input")
                 )
-            }
-            Spacer(Modifier.height(s.md))
-
-            if (selectedTab == 0) {
-                if (annotations.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.empty_annotations_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = cs.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = s.xl)
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = sz.sheetListMaxHeight),
-                        verticalArrangement = Arrangement.spacedBy(s.sm)
-                    ) {
-                        items(
-                            items = annotations,
-                            key = { it.id },
-                            contentType = { "annotation_item" }
-                        ) { note ->
-                            val swatchColor = parseHexColor(
-                                hex = note.colorHex,
-                                fallback = TeenaTheme.colors.reader.highlightDefault
-                            )
-                            Surface(
-                                onClick = {
-                                    onDismiss()
-                                    onOpenDocumentPage(note.documentUri, (note.pageNumber - 1).coerceAtLeast(0))
-                                },
-                                shape = MaterialTheme.shapes.medium,
-                                color = cs.background,
-                                border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(s.md),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(s.md)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(sz.colorDotSize)
-                                            .clip(CircleShape)
-                                            .background(swatchColor)
-                                    )
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(s.xxs)
-                                    ) {
-                                        Text(
-                                            text = note.quotedText.ifBlank { note.noteText },
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = cs.onSurface,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = stringResource(
-                                                R.string.folder_meta_format,
-                                                note.documentTitle,
-                                                stringResource(R.string.page_badge_short, note.pageNumber)
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = cs.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    IconButton(onClick = { onDeleteAnnotation(note.id) }) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.DeleteOutline,
-                                            contentDescription = stringResource(R.string.action_delete),
-                                            tint = cs.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = isValidName,
+                    onClick = {
+                        onMoveToFolder(FolderKey.virtual(trimmedName))
+                        showNewFolderDialog = false
+                        onDismiss()
+                    },
+                    modifier = Modifier.testTag("new_folder_confirm_button")
+                ) {
+                    Text(stringResource(R.string.action_save))
                 }
-            } else {
-                if (bookmarks.isEmpty()) {
-                    Text(
-                        text = stringResource(R.string.empty_bookmarks_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = cs.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = s.xl)
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = sz.sheetListMaxHeight),
-                        verticalArrangement = Arrangement.spacedBy(s.sm)
-                    ) {
-                        items(
-                            items = bookmarks,
-                            key = { it.id },
-                            contentType = { "bookmark_item" }
-                        ) { bookmark ->
-                            Surface(
-                                onClick = {
-                                    onDismiss()
-                                    onOpenDocumentPage(bookmark.documentUri, (bookmark.pageNumber - 1).coerceAtLeast(0))
-                                },
-                                shape = MaterialTheme.shapes.medium,
-                                color = cs.background,
-                                border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(s.md),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(s.md)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Bookmark,
-                                        contentDescription = null,
-                                        tint = cs.primary
-                                    )
-                                    Column(
-                                        modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(s.xxs)
-                                    ) {
-                                        Text(
-                                            text = bookmark.title,
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = cs.onSurface,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            text = stringResource(
-                                                R.string.folder_meta_format,
-                                                bookmark.documentTitle,
-                                                stringResource(R.string.page_badge_short, bookmark.pageNumber)
-                                            ),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = cs.onSurfaceVariant,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    IconButton(onClick = { onDeleteBookmark(bookmark.id) }) {
-                                        Icon(
-                                            imageVector = Icons.Rounded.DeleteOutline,
-                                            contentDescription = stringResource(R.string.action_delete),
-                                            tint = cs.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showNewFolderDialog = false },
+                    modifier = Modifier.testTag("new_folder_cancel_button")
+                ) {
+                    Text(stringResource(R.string.action_cancel))
                 }
             }
-            Spacer(Modifier.height(s.xl))
-        }
+        )
     }
 }
 
@@ -527,6 +488,52 @@ fun AboutTeenaDialog(onDismiss: () -> Unit) {
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text(stringResource(R.string.action_ok))
+            }
+        }
+    )
+}
+
+@Composable
+fun RemoveDocumentConfirmDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = cs.surface,
+        shape = MaterialTheme.shapes.extraLarge,
+        title = {
+            Text(
+                text = stringResource(R.string.remove_confirm_title),
+                style = MaterialTheme.typography.titleLarge,
+                color = cs.onSurface
+            )
+        },
+        text = {
+            Text(
+                text = stringResource(R.string.remove_confirm_with_notes),
+                style = MaterialTheme.typography.bodyMedium,
+                color = cs.onSurfaceVariant
+            )
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("remove_confirm_cancel")
+            ) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                modifier = Modifier.testTag("remove_confirm_delete")
+            ) {
+                Text(
+                    text = stringResource(R.string.action_remove),
+                    color = cs.error
+                )
             }
         }
     )

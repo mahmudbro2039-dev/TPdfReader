@@ -22,6 +22,7 @@
     <string name="status_reading">Reading</string>
     <string name="status_completed">Done</string>
     <string name="status_on_hold">On Hold</string>
+    <string name="status_abandoned">Dropped</string>
     <string name="filter_all">All</string>
     <string name="filter_chip_with_count">%1$s %2$d</string>
     <string name="menu_dark_mode">Dark mode</string>
@@ -39,9 +40,7 @@
     <string name="empty_filter_body">Try switching to All or open another PDF to add it here.</string>
     <string name="empty_folders_title">No folders yet</string>
     <string name="empty_folders_body">Open PDFs to see them organized cleanly by folder here.</string>
-    <string name="empty_bookmarks_title">No bookmarks saved</string>
     <string name="empty_bookmarks_subtitle">Bookmark important pages while reading to jump back to them anytime.</string>
-    <string name="empty_annotations_title">No highlights or notes yet</string>
     <string name="empty_annotations_subtitle">Add highlights, notes, or vector signatures inside any PDF to review them here.</string>
 
     <!-- Plurals -->
@@ -53,38 +52,31 @@
         <item quantity="one">%d PDF</item>
         <item quantity="other">%d PDFs</item>
     </plurals>
-    <plurals name="notes_summary">
-        <item quantity="one">%d note</item>
-        <item quantity="other">%d notes</item>
+    <plurals name="search_index_incomplete">
+        <item quantity="one">Indexing %1$d of %2$d PDF. Results may be incomplete.</item>
+        <item quantity="other">Indexing %1$d of %2$d PDFs. Results may be incomplete.</item>
     </plurals>
-    <plurals name="highlight_count">
-        <item quantity="one">%d highlight</item>
-        <item quantity="other">%d highlights</item>
-    </plurals>
-    <plurals name="bookmark_count">
-        <item quantity="one">%d bookmark</item>
-        <item quantity="other">%d bookmarks</item>
+    <plurals name="ocr_done_message">
+        <item quantity="one">%1$d page is now searchable</item>
+        <item quantity="other">%1$d pages are now searchable</item>
     </plurals>
 
     <!-- Folders, Sort & Modals -->
     <string name="breadcrumb_storage">Storage</string>
     <string name="folder_meta_format">%1$s · %2$s</string>
-    <string name="folder_updated_format">Updated %1$s</string>
-    <string name="notes_hub_summary">%1$s · %2$s</string>
-    <string name="notes_hub_empty">Tap to review bookmarks &amp; highlights</string>
     <string name="sort_sheet_title">Sort PDFs by</string>
     <string name="sort_last_opened">Last opened</string>
     <string name="sort_name">Name</string>
     <string name="sort_date_added">Date added</string>
     <string name="sort_size">Size</string>
     <string name="sort_progress">Progress</string>
-    <string name="about_title">About TeenaReader</string>
     <string name="about_body">TeenaReader is a fast, distraction-free, offline PDF reader designed for clean reading, crisp thumbnails, bookmarks, highlights, and e-reader Text Mode.</string>
     <string name="about_version">Version 1.0</string>
     <string name="action_ok">OK</string>
     <string name="action_back">Back</string>
     <string name="action_close">Close</string>
     <string name="action_cancel">Cancel</string>
+    <string name="action_continue">Continue</string>
     <string name="action_save">Save</string>
     <string name="action_delete">Delete</string>
     <string name="action_remove">Remove</string>
@@ -95,8 +87,21 @@
     <string name="change_reading_status">Reading status</string>
     <string name="remove_from_library">Remove from library</string>
     <string name="move_to_folder">Move to folder</string>
+    <string name="folder_imported">Imported</string>
+    <string name="folder_new">New folder…</string>
+    <string name="folder_new_title">New folder</string>
+    <string name="folder_new_hint">Folder name</string>
+    <string name="folder_move_hint">Organizes within TeenaReader only; files on storage are not moved.</string>
+    <string name="action_make_searchable">Make searchable (OCR)</string>
+    <string name="action_stop_ocr">Stop OCR</string>
+    <string name="ocr_progress">OCR: page %1$d of %2$d</string>
+    <string name="ocr_data_missing">OCR language data is not installed.</string>
+    <string name="ocr_failed_generic">Couldn\'t run OCR on this PDF.</string>
+    <string name="ocr_stopped_low_battery">OCR stopped due to low battery.</string>
     <string name="search_results_header">SEARCH RESULTS</string>
-    <string name="tab_bookmarks_label">Bookmarks</string>
+    <string name="search_inside_pdfs_title">Inside PDFs</string>
+    <string name="search_result_page">Page %1$d</string>
+    <string name="search_no_results">No results found.</string>
     <string name="tab_highlights_label">Highlights</string>
     <string name="page_badge_short">Page %1$d</string>
     <string name="file_size_local">Local PDF</string>
@@ -119,12 +124,12 @@
     <string name="reader_auto_scroll">Auto-Scroll</string>
     <string name="reader_brightness">Brightness</string>
     <string name="reader_rotate">Rotate Screen</string>
+    <string name="reader_orientation_lock">Lock Orientation</string>
+    <string name="reader_orientation_locked">Orientation Locked</string>
     <string name="reader_zoom_lock">Zoom Lock</string>
     <string name="reader_hide_margins">Hide Margins</string>
     <string name="reader_search_in_pdf">Search in PDF</string>
     <string name="reader_search_hint">Find text in document…</string>
-    <string name="reader_table_of_contents">Table of Contents</string>
-    <string name="reader_navigation_history">Jump History</string>
     <string name="reader_annotations">Highlights &amp; Notes</string>
     <string name="reader_sign_pdf">Sign PDF</string>
     <string name="reader_share_quote">Share Quote Card</string>
@@ -137,20 +142,17 @@
     <string name="reader_keep_screen_on">Keep Screen On</string>
     <string name="reader_rtl_mode">Right-to-Left (RTL)</string>
     <string name="reader_error_title">Unable to open PDF</string>
-    <string name="reader_error_retry">Retry</string>
-    <string name="reader_page_indicator">%1$d / %2$d</string>
     <string name="reader_previous_match">Previous match</string>
     <string name="reader_next_match">Next match</string>
     <string name="reader_no_matches">No matches</string>
     <string name="reader_match_counter">%1$d / %2$d</string>
-    <string name="reader_zoom_reset">Reset zoom</string>
+    <string name="reader_search_preparing">Preparing this PDF for search…</string>
+    <string name="reader_search_no_text">This PDF has no searchable text.</string>
+    <string name="reader_search_partial">Still indexing. More results may appear.</string>
     <string name="reader_scroll_slower">Slower</string>
     <string name="reader_scroll_faster">Faster</string>
-    <string name="reader_pause">Pause</string>
-    <string name="reader_play">Resume</string>
     <string name="reader_speed_label">Speed %1$dx</string>
     <string name="reader_system_brightness">System</string>
-    <string name="reader_page_count_zero">No pages</string>
     <string name="reader_signature_signed">Signed</string>
     <string name="reader_signature_hint">Draw your signature below</string>
     <string name="reader_signature_label_hint">Signer label (optional)</string>
@@ -158,10 +160,8 @@
     <string name="reader_signature_stamp">Stamp on Page %1$d</string>
     <string name="reader_quote_hint">Quote text</string>
     <string name="reader_quote_share_image">Share Quote Image</string>
-    <string name="reader_quote_theme">Card Theme</string>
     <string name="reader_note_quote_hint">Passage or highlight text</string>
     <string name="reader_note_comment_hint">Personal note (optional)</string>
-    <string name="reader_add_highlight">Save Highlight</string>
     <string name="reader_no_links">No external links or page references found in this PDF.</string>
     <string name="reader_no_toc">No chapter headings detected.</string>
     <string name="reader_no_jump_history">No jump history yet.</string>
@@ -190,6 +190,16 @@
     <string name="text_mode_copied">Page text copied to clipboard</string>
     <string name="text_mode_prev_page">Previous page</string>
     <string name="text_mode_next_page">Next page</string>
+    <string name="text_mode_page_label">Page %1$d of %2$d</string>
+    <string name="text_mode_loading">Extracting text…</string>
+    <string name="text_mode_page_empty">No readable text on this page (it may be scanned or image-only).</string>
+    <string name="text_mode_page_garbled">Text on this page couldn\'t be decoded cleanly.</string>
+    <string name="text_mode_page_legacy_font">This page uses a legacy font encoding that can\'t be read as Unicode text.</string>
+    <string name="text_mode_page_failed">Couldn\'t extract text from this page.</string>
+    <string name="action_view_original_page">View original page</string>
+    <string name="text_mode_error_encrypted">This PDF is password-protected.</string>
+    <string name="text_mode_error_corrupt">This PDF file appears damaged or unreadable.</string>
+    <string name="text_mode_error_generic">Couldn\'t open this PDF for Text Mode.</string>
 
     <!-- Settings -->
     <string name="settings_title">Settings</string>
@@ -224,19 +234,23 @@
     <string name="settings_cache_cleared">Render cache cleared</string>
     <string name="settings_history_cleared">Library history cleared</string>
     <string name="settings_clear_history_confirm">This removes saved history, bookmarks, and annotations from TeenaReader. Your actual PDF files on storage remain untouched.</string>
+    <string name="settings_search_index_title">Search index</string>
+    <string name="settings_search_index_status">%1$d of %2$d PDFs indexed</string>
+    <string name="settings_search_index_paused_battery">Paused: low battery</string>
+    <string name="settings_search_index_paused_saver">Paused: battery saver</string>
+    <string name="settings_search_index_rebuild">Rebuild index</string>
+    <string name="settings_search_index_rebuild_confirm">Search will be incomplete until indexing finishes.</string>
 
-    <!-- Device Permissions, Battery & Fast Scanner -->
+    <!-- Device Permissions & Fast Scanner -->
     <string name="settings_section_permissions">Device Access &amp; Scanner</string>
     <string name="perm_all_files_title">All Files Access</string>
     <string name="perm_all_files_granted">Full storage access enabled (Android up to 16)</string>
     <string name="perm_all_files_missing">Allow full file access to auto-discover all device PDFs</string>
-    <string name="perm_battery_title">Unrestricted Battery</string>
-    <string name="perm_battery_granted">Battery optimization disabled for uninterrupted scans &amp; reading</string>
-    <string name="perm_battery_missing">Disable battery optimization so background indexing never stalls</string>
     <string name="perm_grant_action">Allow</string>
-    <string name="perm_disable_battery_action">Optimize Off</string>
     <string name="perm_banner_files_desc">Grant All Files Access to instantly scan and load all PDFs across your device.</string>
-    <string name="perm_banner_battery_desc">Disable battery optimization for ultra-fast scanning and uninterrupted reading.</string>
+    <string name="permission_all_files_title">Find all PDFs on your device</string>
+    <string name="permission_all_files_message">To scan folders across your storage, allow All Files Access in system settings.</string>
+    <string name="permission_denied_hint">All Files Access wasn\'t granted. Use Open PDF to pick files directly.</string>
     <string name="scanner_scanning_title">Scanning storage for PDFs…</string>
     <string name="scanner_found_count">%1$d PDFs found</string>
     <string name="scanner_rescan_title">Scan Device for PDFs</string>
@@ -244,4 +258,88 @@
     <string name="scanner_rescan_menu">Scan device PDFs</string>
     <string name="scanner_rescan_done">Scan complete: %1$d new PDFs added (%2$d total found)</string>
     <string name="file_meta_ready">%1$s · Ready</string>
+
+    <!-- Missing File & Safe Deletion -->
+    <string name="file_unavailable">File unavailable</string>
+    <string name="file_not_found_message">This PDF file can no longer be found.</string>
+    <string name="remove_confirm_title">Remove from library?</string>
+    <string name="remove_confirm_with_notes">Removing this PDF will also delete its bookmarks and notes from TeenaReader. The original file on your device is not affected.</string>
+    <string name="cannot_open_pdf">Unable to open this PDF file.</string>
+
+    <!-- Enum Option Labels -->
+    <string name="enum_status_to_read">To-Read</string>
+    <string name="enum_status_reading">Reading</string>
+    <string name="enum_status_on_hold">On-Hold</string>
+    <string name="enum_status_completed">Completed</string>
+    <string name="enum_status_abandoned">Abandoned</string>
+    <string name="theme_amoled">AMOLED Black</string>
+    <string name="pdf_color_normal">Original</string>
+    <string name="pdf_color_dark">Dark Mode</string>
+    <string name="pdf_color_sepia">Warm Sepia</string>
+    <string name="pdf_color_high_contrast">High Contrast</string>
+    <string name="layout_vertical">Vertical Continuous</string>
+    <string name="layout_horizontal">Horizontal Scroll</string>
+    <string name="layout_single_page">Single Page (Book Flip)</string>
+    <string name="layout_dual_page">Dual-Page Book Spread</string>
+    <string name="fit_width">Fit Width</string>
+    <string name="fit_height">Fit Height</string>
+    <string name="fit_page">Whole Page</string>
+    <string name="text_theme_light">Paper</string>
+    <string name="text_theme_sepia">Sepia</string>
+    <string name="text_theme_dracula">Dracula</string>
+    <string name="quote_theme_light">Paper Light</string>
+    <string name="quote_theme_dark">Obsidian Dark</string>
+    <string name="quote_theme_dracula">Dracula Purple</string>
+    <string name="font_sans">Sans</string>
+    <string name="font_serif">Serif</string>
+    <string name="font_mono">Mono</string>
+    <string name="annotation_highlight">Highlight</string>
+    <string name="annotation_note">Note</string>
+    <string name="annotation_signature">Signature</string>
+    <string name="highlight_yellow">Amber Yellow</string>
+    <string name="highlight_green">Mint Green</string>
+    <string name="highlight_blue">Sky Blue</string>
+    <string name="highlight_pink">Rose Pink</string>
+    <string name="highlight_orange">Sunset Orange</string>
+    <string name="library_sort_recent">Recently Opened</string>
+    <string name="library_sort_title">Title (A–Z)</string>
+    <string name="library_sort_progress">Reading Progress</string>
+    <string name="library_sort_pages">Page Count</string>
+    <string name="library_sort_size">File Size</string>
+    <string name="render_quality_standard">Standard (Fast)</string>
+    <string name="render_quality_high">High DPI (Crisp)</string>
+
+    <!-- Reader UI & Data Fallbacks -->
+    <string name="reader_tab_contents">Contents (%1$d)</string>
+    <string name="reader_tab_bookmarks">Bookmarks (%1$d)</string>
+    <string name="reader_tab_history">History (%1$d)</string>
+    <string name="reader_page_short">p. %1$d</string>
+    <string name="reader_doc_page_meta">%1$s  ·  %2$s</string>
+    <string name="reader_links_count">%1$s (%2$d)</string>
+    <string name="reader_doc_info_detail">%1$s  ·  %2$s  ·  %3$.1fx</string>
+    <string name="reader_highlight_default_quote">Highlighted passage on Page %1$d</string>
+    <string name="reader_annotation_card_header">%1$s  ·  %2$s</string>
+    <string name="reader_quoted_passage">“%1$s”</string>
+    <string name="reader_quote_fallback">Great reading software disappears behind the content, putting your document and ideas first.</string>
+    <string name="reader_link_meta_format">%1$s  ·  %2$s</string>
+    <string name="reader_page_content_desc">PDF Page %1$d</string>
+    <string name="reader_bookmarked_page_desc">Bookmarked Page</string>
+    <string name="reader_page_progress_pill">%1$d / %2$d  ·  %3$d%%</string>
+    <string name="reader_signature_default_label">Handwritten Vector Signature</string>
+    <string name="reader_signed_on_page">Signed on Page %1$d</string>
+    <string name="default_folder_documents">Documents</string>
+    <string name="default_folder_downloads">Downloads</string>
+    <string name="default_folder_internal_storage">Internal Storage</string>
+    <string name="untitled_pdf">Untitled PDF</string>
+    <string name="print_failed">Print failed</string>
+    <string name="toc_section_label">Section %1$d</string>
+    <string name="link_external_web">External Web Link (%1$s)</string>
+    <string name="link_jump_to">Jump to %1$s</string>
+    <string name="link_internal_page_ref">Internal reference to Page %1$d</string>
+    <string name="quote_share_subject">Quote from %1$s</string>
+    <string name="starter_guide_folder">Guides &amp; Manuals</string>
+    <string name="starter_arch_folder">Books &amp; Research</string>
+    <string name="starter_bookmark_title">Every Tool, One Tap Away</string>
+    <string name="starter_highlight_quote">Tap anywhere in the center of a page to enter True Edge-to-Edge Full-Screen Mode.</string>
+    <string name="starter_highlight_note">Full-screen mode with floating edge shortcut pills.</string>
 </resources>

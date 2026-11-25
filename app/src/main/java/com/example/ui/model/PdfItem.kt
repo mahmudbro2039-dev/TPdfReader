@@ -5,10 +5,10 @@ import com.example.data.local.AnnotationEntity
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.PdfDocumentEntity
 import com.example.data.model.AppThemeMode
-import com.example.ui.theme.ReadingStatus
+import com.example.data.model.FolderKey
+import com.example.data.model.ReadingProgress
+import com.example.data.model.ReadingStatus
 import com.example.ui.theme.ThemeMode
-import kotlin.math.roundToInt
-import com.example.data.model.ReadingStatus as DataReadingStatus
 
 enum class ViewMode { List, Grid }
 
@@ -37,18 +37,22 @@ data class PdfItem(
     val lastOpenedAt: Long,
     val addedAt: Long = lastOpenedAt,
     val status: ReadingStatus,
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    val isMissing: Boolean = false,
+    val hasBeenOpened: Boolean = ReadingProgress.hasBeenOpened(lastOpenedAt),
+    val progress: Float = ReadingProgress.fraction(
+        currentPage = (currentPage - 1).coerceAtLeast(0),
+        pageCount = totalPages,
+        lastOpenedAt = lastOpenedAt,
+        isCompleted = status == ReadingStatus.COMPLETED
+    ),
+    val percent: Int = ReadingProgress.percent(progress),
+    val folderDisplayName: String = FolderKey.displayName(folderName)
 )
-
-/** THE ONLY progress formula in the whole app. Bar width and % must both use it. */
-val PdfItem.progress: Float
-    get() = if (totalPages <= 0) 0f else (currentPage.coerceIn(0, totalPages).toFloat() / totalPages).coerceIn(0f, 1f)
-
-val PdfItem.percent: Int
-    get() = (progress * 100).roundToInt()
 
 @Immutable
 data class FolderItem(
+    val key: String,
     val name: String,
     val pdfCount: Int,
     val totalSizeBytes: Long,
@@ -77,20 +81,6 @@ data class AnnotationUiItem(
     val isSignature: Boolean
 )
 
-fun DataReadingStatus.toUiStatus(): ReadingStatus = when (this) {
-    DataReadingStatus.TO_READ -> ReadingStatus.ToRead
-    DataReadingStatus.READING -> ReadingStatus.Reading
-    DataReadingStatus.COMPLETED -> ReadingStatus.Completed
-    DataReadingStatus.ON_HOLD, DataReadingStatus.ABANDONED -> ReadingStatus.OnHold
-}
-
-fun ReadingStatus.toDataStatus(): DataReadingStatus = when (this) {
-    ReadingStatus.ToRead -> DataReadingStatus.TO_READ
-    ReadingStatus.Reading -> DataReadingStatus.READING
-    ReadingStatus.Completed -> DataReadingStatus.COMPLETED
-    ReadingStatus.OnHold -> DataReadingStatus.ON_HOLD
-}
-
 fun AppThemeMode.toThemeMode(): ThemeMode = when (this) {
     AppThemeMode.SYSTEM -> ThemeMode.System
     AppThemeMode.LIGHT -> ThemeMode.Light
@@ -103,8 +93,15 @@ fun ThemeMode.toAppThemeMode(): AppThemeMode = when (this) {
     ThemeMode.Dark -> AppThemeMode.DARK
 }
 
-fun PdfDocumentEntity.toPdfItem(): PdfItem {
-    val oneBasedPage = if (pageCount <= 0) 0 else (currentPage + 1).coerceIn(1, pageCount)
+fun PdfDocumentEntity.toPdfItem(isMissing: Boolean = false): PdfItem {
+    val opened = ReadingProgress.hasBeenOpened(lastOpenedAt)
+    val oneBasedPage = if (pageCount <= 0 || !opened) 0 else (currentPage + 1).coerceIn(1, pageCount)
+    val fraction = ReadingProgress.fraction(
+        currentPage = currentPage,
+        pageCount = pageCount,
+        lastOpenedAt = lastOpenedAt,
+        isCompleted = status == ReadingStatus.COMPLETED
+    )
     return PdfItem(
         id = uriString,
         title = title,
@@ -115,8 +112,13 @@ fun PdfDocumentEntity.toPdfItem(): PdfItem {
         sizeBytes = fileSizeBytes,
         lastOpenedAt = lastOpenedAt,
         addedAt = addedAt,
-        status = status.toUiStatus(),
-        isPinned = isFavorite
+        status = status,
+        isPinned = isFavorite,
+        isMissing = isMissing,
+        hasBeenOpened = opened,
+        progress = fraction,
+        percent = ReadingProgress.percent(fraction),
+        folderDisplayName = FolderKey.displayName(folderName)
     )
 }
 

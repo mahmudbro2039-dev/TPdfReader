@@ -1,9 +1,12 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.local.AnnotationEntity
 import com.example.data.local.BookmarkEntity
 import com.example.data.local.PdfDocumentEntity
@@ -19,9 +22,17 @@ import com.example.data.model.TextModeTheme
 import com.example.data.pdf.DocumentLinkEntry
 import com.example.data.pdf.PdfEngine
 import com.example.data.pdf.PdfPageDimension
-import com.example.data.pdf.PdfTextExtractor
+import com.example.data.pdf.PdfStructureParser
 import com.example.data.pdf.TocEntry
 import com.example.data.repository.PdfLibraryRepository
+import com.example.data.search.SearchIndexRepository
+import com.example.data.search.SearchIndexer
+import com.example.data.search.SearchTextNormalizer
+import com.example.data.search.db.IndexStatus
+import com.example.data.text.OpenResult
+import com.example.data.text.PdfTextEngine
+import com.example.ui.theme.ContentColors
+import com.example.ui.theme.ReaderZoomTokens
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -31,16 +42,30 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class OrientationLock {
+    AUTO,
+    LOCKED
+}
+
+data class ReaderViewOptions(
+    val colorMode: PdfColorMode? = null,
+    val layoutMode: ScrollLayoutMode? = null,
+    val pageFitPolicy: PageFitPolicy? = null
+)
+
 sealed interface ReaderLoadState {
     data object Loading : ReaderLoadState
     data object Ready : ReaderLoadState
-    data class Error(val message: String) : ReaderLoadState
+    data class Error(val message: String = "") : ReaderLoadState
 }
 
 data class InPdfSearchMatch(
@@ -53,9 +78,9 @@ data class ReaderUiState(
     val loadState: ReaderLoadState = ReaderLoadState.Loading,
     val uriString: String = "",
     val documentTitle: String = "",
-    val folderName: String = "Documents",
+    val folderName: String = "",
     val fileSizeBytes: Long = 0L,
-    val readingStatus: ReadingStatus = ReadingStatus.READING,
+    val readingStatus: ReadingStatus = ReadingStatus.TO_READ,
     val pageCount: Int = 0,
     val currentPage: Int = 0,
     val pageDimensions: List<PdfPageDimension> = emptyList(),
@@ -84,8 +109,10 @@ data class ReaderUiState(
     val jumpForwardStack: List<Int> = emptyList(),
     val visitedPagesHistory: List<Int> = emptyList(),
     val pendingScrollTargetPage: Int? = null,
-    val extractedTextPages: List<String> = emptyList(),
-    val isExtractingText: Boolean = false
+    val isSearchIndexing: Boolean = false,
+    val searchStatusRes: Int? = null,
+    val currentPageText: String = "",
+    val orientationLock: OrientationLock = OrientationLock.AUTO
 ) {
     val isCurrentPageBookmarked: Boolean
         get() = bookmarks.any { it.pageIndex == currentPage }
@@ -104,36 +131,91 @@ class ReaderViewModel(
     private val libraryRepository: PdfLibraryRepository,
     private val preferencesRepository: PreferencesRepository,
     private val pdfEngine: PdfEngine,
-    private val pdfTextExtractor: PdfTextExtractor
+    private val searchIndexRepository: SearchIndexRepository? = null,
+    private val searchIndexer: SearchIndexer? = null,
+    private val textEngine: PdfTextEngine? = null,
+    private val appContext: Context? = null,
+    initialPreferences: UserPreferences = UserPreferences()
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(ReaderUiState())
     val uiState: StateFlow<ReaderUiState> = _uiState.asStateFlow()
 
+    private val _viewOptions = MutableStateFlow(ReaderViewOptions())
+
     val preferences: StateFlow<UserPreferences> = preferencesRepository.preferencesFlow
         .stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
-            initialValue = UserPreferences()
+            initialValue = initialPreferences
         )
 
     private var documentJob: Job? = null
     private var bookmarksJob: Job? = null
     private var annotationsJob: Job? = null
     private var progressSaveJob: Job? = null
-    private var textExtractionJob: Job? = null
+    private var indexObserveJob: Job? = null
+    private var pendingDelayedRerunJob: Job? = null
+    private var structureJob: Job? = null
+    private var pageTextJob: Job? = null
     private var inPdfSearchJob: Job? = null
     private var openDocumentJob: Job? = null
     private var prefetchJob: Job? = null
     private var dimensionScanJob: Job? = null
     private var activeLoadingInitialPage: Int? = null
     private var lastRenderTargetWidthPx: Int = 0
-    private var loadedTextUri: String? = null
-    private var extractingTextUri: String? = null
-    private var isExtractingTextDelayed: Boolean = false
+    private var loadedStructureUri: String? = null
+    private var prioritizedUri: String? = null
+    private var lastObservedTextPages: Int = -1
+    private var lastSearchRerunAtMs: Long = 0L
+
+    private data class PrefDefaults(
+        val incognito: Boolean,
+        val colorMode: PdfColorMode,
+        val layoutMode: ScrollLayoutMode,
+        val pageFitPolicy: PageFitPolicy
+    )
+
+    init {
+        viewModelScope.launch {
+            combine(
+                preferencesRepository.preferencesFlow.map { prefs ->
+                    PrefDefaults(
+                        incognito = prefs.incognitoMode,
+                        colorMode = prefs.defaultPdfColorMode,
+                        layoutMode = prefs.defaultLayoutMode,
+                        pageFitPolicy = prefs.defaultPageFitPolicy
+                    )
+                }.distinctUntilChanged(),
+                _viewOptions
+            ) { defaults, overrides ->
+                defaults to overrides
+            }.collect { (defaults, overrides) ->
+                if (defaults.incognito) {
+                    progressSaveJob?.cancel()
+                }
+                _uiState.update { state ->
+                    state.copy(
+                        incognitoMode = defaults.incognito,
+                        colorMode = overrides.colorMode ?: defaults.colorMode,
+                        layoutMode = overrides.layoutMode ?: defaults.layoutMode,
+                        pageFitPolicy = overrides.pageFitPolicy ?: defaults.pageFitPolicy
+                    )
+                }
+            }
+        }
+    }
 
     fun openDocument(uriString: String, initialPageOverride: Int? = null) {
-        if (uriString.isBlank()) return
+        if (uriString.isBlank()) {
+            _uiState.update {
+                it.copy(
+                    loadState = ReaderLoadState.Error(),
+                    uriString = ""
+                )
+            }
+            return
+        }
         val currentState = _uiState.value
         val alreadyOpen = currentState.uriString == uriString && currentState.loadState is ReaderLoadState.Ready
         if (alreadyOpen && initialPageOverride != null) {
@@ -154,13 +236,20 @@ class ReaderViewModel(
         documentJob?.cancel()
         bookmarksJob?.cancel()
         annotationsJob?.cancel()
-        textExtractionJob?.cancel()
+        indexObserveJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
+        structureJob?.cancel()
+        pageTextJob?.cancel()
         inPdfSearchJob?.cancel()
         activeLoadingInitialPage = initialPageOverride
-        extractingTextUri = null
-        loadedTextUri = null
-        isExtractingTextDelayed = false
+        loadedStructureUri = null
+        prioritizedUri = null
+        lastObservedTextPages = -1
 
+        if (currentState.uriString != uriString) {
+            _viewOptions.value = ReaderViewOptions()
+        }
+        val activeOverrides = _viewOptions.value
         val currentPrefs = preferences.value
         val instantFallbackTitle = if (currentState.uriString == uriString && currentState.documentTitle.isNotBlank()) {
             currentState.documentTitle
@@ -177,9 +266,9 @@ class ReaderViewModel(
                 pageDimensions = emptyList(),
                 zoomScale = 1f,
                 hideMargins = currentPrefs.hideMarginsByDefault,
-                pageFitPolicy = currentPrefs.defaultPageFitPolicy,
-                colorMode = currentPrefs.defaultPdfColorMode,
-                layoutMode = currentPrefs.defaultLayoutMode,
+                pageFitPolicy = activeOverrides.pageFitPolicy ?: currentPrefs.defaultPageFitPolicy,
+                colorMode = activeOverrides.colorMode ?: currentPrefs.defaultPdfColorMode,
+                layoutMode = activeOverrides.layoutMode ?: currentPrefs.defaultLayoutMode,
                 isRtl = currentPrefs.rtlReading,
                 incognitoMode = currentPrefs.incognitoMode,
                 isChromeVisible = true,
@@ -196,21 +285,40 @@ class ReaderViewModel(
                 jumpForwardStack = emptyList(),
                 visitedPagesHistory = emptyList(),
                 pendingScrollTargetPage = null,
-                extractedTextPages = emptyList(),
-                isExtractingText = false,
+                isSearchIndexing = false,
+                searchStatusRes = null,
+                currentPageText = "",
                 tocEntries = emptyList(),
-                documentLinks = emptyList()
+                documentLinks = emptyList(),
+                orientationLock = if (currentState.uriString == uriString) {
+                    currentState.orientationLock
+                } else {
+                    OrientationLock.AUTO
+                }
             )
         }
 
         openDocumentJob = viewModelScope.launch {
-            val (prefs, savedDoc, result) = coroutineScope {
-                val prefsDeferred = async { preferencesRepository.preferencesFlow.first() }
-                val savedDocDeferred = async { libraryRepository.getDocument(uriString) }
-                val engineDeferred = async {
-                    pdfEngine.openDocument(uriString, initialPageOverride ?: 0)
+            val (prefs, savedDoc, result) = try {
+                coroutineScope {
+                    val prefsDeferred = async { preferencesRepository.preferencesFlow.first() }
+                    val savedDocDeferred = async { libraryRepository.getDocument(uriString) }
+                    val engineDeferred = async {
+                        pdfEngine.openDocument(uriString, initialPageOverride ?: 0)
+                    }
+                    Triple(prefsDeferred.await(), savedDocDeferred.await(), engineDeferred.await())
                 }
-                Triple(prefsDeferred.await(), savedDocDeferred.await(), engineDeferred.await())
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        loadState = ReaderLoadState.Error(
+                            e.localizedMessage.orEmpty()
+                        )
+                    )
+                }
+                return@launch
             }
 
             result.fold(
@@ -218,24 +326,28 @@ class ReaderViewModel(
                     val maxIndex = (metadata.pageCount - 1).coerceAtLeast(0)
                     val startPage = (initialPageOverride ?: savedDoc?.currentPage ?: 0).coerceIn(0, maxIndex)
                     val resolvedTitle = savedDoc?.title?.takeIf { it.isNotBlank() }
-                        ?: libraryRepository.resolveDocumentTitle(uriString).ifBlank { "PDF Document" }
+                        ?: libraryRepository.resolveDocumentTitle(uriString)
 
+                    val resolvedOverrides = _viewOptions.value
                     _uiState.update {
                         it.copy(
                             loadState = ReaderLoadState.Ready,
                             uriString = uriString,
                             documentTitle = resolvedTitle,
-                            folderName = savedDoc?.folderName ?: "Documents",
+                            folderName = savedDoc?.folderName.orEmpty(),
                             fileSizeBytes = savedDoc?.fileSizeBytes ?: 0L,
-                            readingStatus = savedDoc?.status ?: ReadingStatus.READING,
+                            readingStatus = savedDoc?.status ?: ReadingStatus.TO_READ,
                             pageCount = metadata.pageCount,
                             currentPage = startPage,
                             pageDimensions = metadata.pageDimensions,
-                            zoomScale = (savedDoc?.zoomScale ?: 1f).coerceIn(1f, 4f),
+                            zoomScale = (savedDoc?.zoomScale ?: 1f).coerceIn(
+                                ReaderZoomTokens.ZoomMin,
+                                ReaderZoomTokens.ZoomMax
+                            ),
                             hideMargins = prefs.hideMarginsByDefault,
-                            pageFitPolicy = prefs.defaultPageFitPolicy,
-                            colorMode = prefs.defaultPdfColorMode,
-                            layoutMode = prefs.defaultLayoutMode,
+                            pageFitPolicy = resolvedOverrides.pageFitPolicy ?: prefs.defaultPageFitPolicy,
+                            colorMode = resolvedOverrides.colorMode ?: prefs.defaultPdfColorMode,
+                            layoutMode = resolvedOverrides.layoutMode ?: prefs.defaultLayoutMode,
                             isRtl = prefs.rtlReading,
                             incognitoMode = prefs.incognitoMode,
                             autoScrollSpeed = prefs.autoScrollSpeed,
@@ -245,17 +357,25 @@ class ReaderViewModel(
                     }
 
                     observeDocumentBookmarksAndAnnotations(uriString)
+                    prioritizedUri = uriString
+                    searchIndexer?.prioritize(uriString)
+                    observeIndexDoc(uriString)
+                    if (!prefs.incognitoMode) {
+                        libraryRepository.markOpened(
+                            uriString = uriString,
+                            now = System.currentTimeMillis(),
+                            pageCount = metadata.pageCount
+                        )
+                    }
                     schedulePrefetchAround(startPage)
                     scheduleProgressPersist()
                     scheduleDimensionScan(uriString, metadata.pageCount)
-                    // Pre-extract text in background for live search, Table of Contents, and Document Links
-                    extractTextAndStructureInBackground(uriString, metadata.pageCount, immediate = false)
                 },
                 onFailure = { error ->
                     _uiState.update {
                         it.copy(
                             loadState = ReaderLoadState.Error(
-                                error.localizedMessage ?: "The PDF file could not be opened. It may be moved, corrupted, or password-protected."
+                                error.localizedMessage.orEmpty()
                             )
                         )
                     }
@@ -268,14 +388,18 @@ class ReaderViewModel(
         documentJob?.cancel()
         documentJob = viewModelScope.launch {
             libraryRepository.observeDocument(uriString).collect { doc ->
-                val docTitle = doc?.title?.trim()
-                if (!docTitle.isNullOrBlank()) {
+                if (doc != null) {
+                    val docTitle = doc.title.trim()
+                    val docStatus = doc.status
                     _uiState.update { state ->
-                        if (state.uriString == uriString && state.documentTitle != docTitle) {
+                        if (state.uriString == uriString &&
+                            ((docTitle.isNotBlank() && state.documentTitle != docTitle) || state.readingStatus != docStatus)
+                        ) {
                             state.copy(
-                                documentTitle = docTitle,
+                                documentTitle = if (docTitle.isNotBlank()) docTitle else state.documentTitle,
                                 folderName = doc.folderName,
-                                fileSizeBytes = doc.fileSizeBytes
+                                fileSizeBytes = doc.fileSizeBytes,
+                                readingStatus = docStatus
                             )
                         } else {
                             state
@@ -314,40 +438,80 @@ class ReaderViewModel(
         }
     }
 
-    private fun extractTextAndStructureInBackground(
-        uriString: String,
-        pageCount: Int,
-        immediate: Boolean = false
-    ) {
-        if (textExtractionJob?.isActive == true && extractingTextUri == uriString) {
-            if (!immediate || !isExtractingTextDelayed) return
-        }
-        textExtractionJob?.cancel()
-        extractingTextUri = uriString
-        isExtractingTextDelayed = !immediate
-        textExtractionJob = viewModelScope.launch {
-            if (!immediate) {
-                delay(250L)
-            }
-            isExtractingTextDelayed = false
-            _uiState.update { it.copy(isExtractingText = true) }
-            val pages = pdfTextExtractor.extractPagesText(uriString, pageCount)
-            val toc = pdfTextExtractor.buildTableOfContents(pages, pageCount)
-            val links = pdfTextExtractor.extractDocumentLinks(pages, pageCount)
-            if (_uiState.value.uriString != uriString) return@launch
-            loadedTextUri = uriString
-            extractingTextUri = null
-            _uiState.update {
-                it.copy(
-                    extractedTextPages = pages,
-                    tocEntries = toc,
-                    documentLinks = links,
-                    isExtractingText = false
-                )
-            }
-            val pendingQuery = _uiState.value.searchQuery
-            if (_uiState.value.isSearchBarVisible && pendingQuery.isNotBlank()) {
-                runInPdfSearch(pendingQuery, pages, jumpToFirst = true)
+    private fun observeIndexDoc(uriString: String) {
+        val repo = searchIndexRepository ?: return
+        indexObserveJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
+        lastObservedTextPages = -1
+        indexObserveJob = viewModelScope.launch {
+            repo.observeDoc(uriString).collect { doc ->
+                val state = _uiState.value
+                if (state.uriString != uriString) return@collect
+
+                val status = doc?.status
+                val textPages = doc?.textPages ?: 0
+                val isIndexing = status == null ||
+                    status == IndexStatus.PENDING ||
+                    status == IndexStatus.INDEXING
+                val statusRes = when (status) {
+                    null, IndexStatus.PENDING, IndexStatus.INDEXING -> {
+                        if (textPages == 0) R.string.reader_search_preparing
+                        else R.string.reader_search_partial
+                    }
+                    IndexStatus.DONE -> {
+                        if (textPages == 0) R.string.reader_search_no_text else null
+                    }
+                    IndexStatus.ENCRYPTED, IndexStatus.FAILED -> R.string.reader_search_no_text
+                }
+
+                if (isIndexing && prioritizedUri != uriString) {
+                    prioritizedUri = uriString
+                    searchIndexer?.prioritize(uriString)
+                }
+
+                _uiState.update {
+                    it.copy(
+                        isSearchIndexing = isIndexing,
+                        searchStatusRes = statusRes
+                    )
+                }
+
+                val latest = _uiState.value
+                if (latest.isSearchBarVisible &&
+                    SearchTextNormalizer.buildMatchQuery(latest.searchQuery) != null
+                ) {
+                    if (status == IndexStatus.DONE) {
+                        pendingDelayedRerunJob?.cancel()
+                        if (textPages != lastObservedTextPages) {
+                            lastObservedTextPages = textPages
+                            runInPdfSearch(latest.searchQuery, jumpToFirst = false)
+                        }
+                    } else if (textPages > 0 && textPages != lastObservedTextPages) {
+                        val now = System.currentTimeMillis()
+                        val elapsed = now - lastSearchRerunAtMs
+                        if (elapsed >= 1_000L) {
+                            lastSearchRerunAtMs = now
+                            lastObservedTextPages = textPages
+                            runInPdfSearch(latest.searchQuery, jumpToFirst = false)
+                        } else if (pendingDelayedRerunJob?.isActive != true) {
+                            val waitMs = (1_000L - elapsed).coerceAtLeast(50L)
+                            pendingDelayedRerunJob = viewModelScope.launch {
+                                delay(waitMs)
+                                val snap = _uiState.value
+                                if (snap.uriString == uriString &&
+                                    snap.isSearchBarVisible &&
+                                    SearchTextNormalizer.buildMatchQuery(snap.searchQuery) != null
+                                ) {
+                                    lastSearchRerunAtMs = System.currentTimeMillis()
+                                    lastObservedTextPages = textPages
+                                    runInPdfSearch(snap.searchQuery, jumpToFirst = false)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    lastObservedTextPages = textPages
+                }
             }
         }
     }
@@ -386,6 +550,27 @@ class ReaderViewModel(
         )
     }
 
+    suspend fun renderPageRegion(
+        pageIndex: Int,
+        zoomedPageWidthPx: Int,
+        left: Int,
+        top: Int,
+        outWidth: Int,
+        outHeight: Int
+    ): Bitmap? {
+        val uri = _uiState.value.uriString
+        if (uri.isBlank()) return null
+        return pdfEngine.renderRegion(
+            uriString = uri,
+            pageIndex = pageIndex,
+            zoomedPageWidthPx = zoomedPageWidthPx,
+            left = left,
+            top = top,
+            outWidth = outWidth,
+            outHeight = outHeight
+        )
+    }
+
     private fun schedulePrefetchAround(centerPage: Int) {
         val state = _uiState.value
         val widthPx = lastRenderTargetWidthPx
@@ -398,7 +583,7 @@ class ReaderViewModel(
         prefetchJob?.cancel()
         prefetchJob = viewModelScope.launch {
             delay(45L)
-            val candidates = listOf(centerPage + 1, centerPage + 2, centerPage - 1, centerPage + 3)
+            val candidates = listOf(centerPage + 1, centerPage - 1, centerPage + 2, centerPage - 2)
                 .distinct()
                 .filter { it in 0 until total && it != centerPage }
             for (pageIdx in candidates) {
@@ -414,23 +599,31 @@ class ReaderViewModel(
         }
     }
 
-    fun onPageScrolled(newPage: Int) {
+    fun onPageScrolled(newPage: Int, persistProgress: Boolean = true) {
         val state = _uiState.value
         val clamped = newPage.coerceIn(0, (state.pageCount - 1).coerceAtLeast(0))
-        if (clamped == state.currentPage) return
-        val updatedVisited = if (state.visitedPagesHistory.lastOrNull() == clamped) {
-            state.visitedPagesHistory
-        } else {
-            (state.visitedPagesHistory + clamped).takeLast(35)
+        if (clamped != state.currentPage) {
+            val updatedVisited = if (state.visitedPagesHistory.lastOrNull() == clamped) {
+                state.visitedPagesHistory
+            } else {
+                (state.visitedPagesHistory + clamped).takeLast(35)
+            }
+            _uiState.update {
+                it.copy(
+                    currentPage = clamped,
+                    visitedPagesHistory = updatedVisited,
+                    currentPageText = ""
+                )
+            }
+            schedulePrefetchAround(clamped)
         }
-        _uiState.update {
-            it.copy(
-                currentPage = clamped,
-                visitedPagesHistory = updatedVisited
-            )
+        if (persistProgress) {
+            scheduleProgressPersist()
         }
-        schedulePrefetchAround(clamped)
-        scheduleProgressPersist()
+    }
+
+    fun onPageSettled(settledPage: Int) {
+        onPageScrolled(settledPage, persistProgress = true)
     }
 
     fun consumePendingScrollTarget() {
@@ -459,7 +652,8 @@ class ReaderViewModel(
                 jumpBackStack = updatedBack,
                 jumpForwardStack = updatedForward,
                 visitedPagesHistory = updatedVisited,
-                pendingScrollTargetPage = clamped
+                pendingScrollTargetPage = clamped,
+                currentPageText = ""
             )
         }
         schedulePrefetchAround(clamped)
@@ -536,7 +730,7 @@ class ReaderViewModel(
     fun setZoomScale(scale: Float) {
         val current = _uiState.value
         if (current.isZoomLocked) return
-        val clamped = scale.coerceIn(1f, 4f)
+        val clamped = scale.coerceIn(ReaderZoomTokens.ZoomMin, ReaderZoomTokens.ZoomMax)
         if (kotlin.math.abs(current.zoomScale - clamped) < 0.005f) return
         _uiState.update { it.copy(zoomScale = clamped) }
         scheduleProgressPersist()
@@ -552,37 +746,43 @@ class ReaderViewModel(
     }
 
     fun setPageFitPolicy(policy: PageFitPolicy) {
+        _viewOptions.update { it.copy(pageFitPolicy = policy) }
         _uiState.update { it.copy(pageFitPolicy = policy) }
-        viewModelScope.launch {
-            preferencesRepository.setDefaultPageFitPolicy(policy)
-        }
     }
 
     fun toggleIncognitoMode() {
         val next = !_uiState.value.incognitoMode
+        if (next) {
+            progressSaveJob?.cancel()
+        }
         _uiState.update { it.copy(incognitoMode = next) }
         viewModelScope.launch {
             preferencesRepository.setIncognitoMode(next)
         }
     }
 
-    // Live In-Document Search with wrapping Next / Previous navigation (MJ PDF v3.1)
+    // Live In-Document Search backed by Room FTS4 index
     fun toggleSearchBar() {
         if (_uiState.value.isSearchBarVisible) {
             closeSearchBar()
         } else {
+            val state = _uiState.value
             _uiState.update {
                 it.copy(
                     isSearchBarVisible = true,
                     isChromeVisible = true
                 )
             }
-            ensureTextExtracted()
+            if (state.isSearchIndexing && state.uriString.isNotBlank() && prioritizedUri != state.uriString) {
+                prioritizedUri = state.uriString
+                searchIndexer?.prioritize(state.uriString)
+            }
         }
     }
 
     fun closeSearchBar() {
         inPdfSearchJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
         _uiState.update {
             it.copy(
                 isSearchBarVisible = false,
@@ -595,10 +795,9 @@ class ReaderViewModel(
 
     fun updateSearchQuery(query: String) {
         inPdfSearchJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
         _uiState.update { it.copy(searchQuery = query) }
-        val trimmed = query.trim()
-        val pages = _uiState.value.extractedTextPages
-        if (trimmed.isEmpty()) {
+        if (SearchTextNormalizer.buildMatchQuery(query) == null) {
             _uiState.update {
                 it.copy(
                     searchMatches = emptyList(),
@@ -607,27 +806,27 @@ class ReaderViewModel(
             }
             return
         }
-        if (pages.isEmpty()) {
-            _uiState.update {
-                it.copy(
-                    searchMatches = emptyList(),
-                    activeSearchMatchIndex = 0
-                )
-            }
-            ensureTextExtracted()
-            return
-        }
-        runInPdfSearch(query, pages, jumpToFirst = true)
+        runInPdfSearch(query, jumpToFirst = true)
     }
 
-    private fun runInPdfSearch(query: String, pages: List<String>, jumpToFirst: Boolean) {
+    private fun runInPdfSearch(query: String, jumpToFirst: Boolean) {
+        val repo = searchIndexRepository ?: return
+        val uri = _uiState.value.uriString
+        if (uri.isBlank()) return
         inPdfSearchJob?.cancel()
         inPdfSearchJob = viewModelScope.launch {
-            val matches = withContext(Dispatchers.Default) {
-                findInPdfMatches(pages, query)
+            val hits = repo.searchInDocument(uri, query)
+            val matches = hits.map { hit ->
+                InPdfSearchMatch(
+                    pageIndex = hit.pageIndex,
+                    snippet = hit.snippet,
+                    matchOrdinalOnPage = 0
+                )
             }
             val latest = _uiState.value
-            if (!latest.isSearchBarVisible || latest.searchQuery != query) return@launch
+            if (!latest.isSearchBarVisible || latest.searchQuery != query || latest.uriString != uri) {
+                return@launch
+            }
 
             val firstMatchNearCurrent = matches.indexOfFirst { it.pageIndex >= latest.currentPage }
                 .takeIf { it >= 0 } ?: 0
@@ -647,40 +846,6 @@ class ReaderViewModel(
         }
     }
 
-    private fun findInPdfMatches(pages: List<String>, query: String): List<InPdfSearchMatch> {
-        val tokens = query.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
-        if (tokens.isEmpty()) return emptyList()
-        val pattern = Regex(
-            tokens.joinToString("\\s+") { Regex.escape(it) },
-            RegexOption.IGNORE_CASE
-        )
-
-        val matches = mutableListOf<InPdfSearchMatch>()
-        for ((pageIndex, pageText) in pages.withIndex()) {
-            if (matches.size >= 150) break
-            var ordinal = 0
-            for (result in pattern.findAll(pageText)) {
-                if (matches.size >= 150) break
-                val startIdx = result.range.first
-                val endIdx = result.range.last + 1
-                val snippetStart = (startIdx - 32).coerceAtLeast(0)
-                val snippetEnd = (endIdx + 48).coerceAtMost(pageText.length)
-                val snippet = pageText.substring(snippetStart, snippetEnd)
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                matches.add(
-                    InPdfSearchMatch(
-                        pageIndex = pageIndex,
-                        snippet = "…$snippet…",
-                        matchOrdinalOnPage = ordinal
-                    )
-                )
-                ordinal++
-            }
-        }
-        return matches
-    }
-
     fun navigateSearchMatch(delta: Int) {
         val matches = _uiState.value.searchMatches
         if (matches.isEmpty()) return
@@ -694,14 +859,16 @@ class ReaderViewModel(
     fun cycleColorMode() {
         val modes = PdfColorMode.entries
         val nextIndex = (modes.indexOf(_uiState.value.colorMode) + 1) % modes.size
-        _uiState.update { it.copy(colorMode = modes[nextIndex]) }
+        setColorMode(modes[nextIndex])
     }
 
     fun setColorMode(mode: PdfColorMode) {
+        _viewOptions.update { it.copy(colorMode = mode) }
         _uiState.update { it.copy(colorMode = mode) }
     }
 
     fun setLayoutMode(mode: ScrollLayoutMode) {
+        _viewOptions.update { it.copy(layoutMode = mode) }
         _uiState.update {
             it.copy(
                 layoutMode = mode,
@@ -738,6 +905,17 @@ class ReaderViewModel(
         _uiState.update { it.copy(brightnessOverride = value?.coerceIn(0.05f, 1f)) }
     }
 
+    fun toggleOrientationLock() {
+        _uiState.update { state ->
+            val next = if (state.orientationLock == OrientationLock.LOCKED) {
+                OrientationLock.AUTO
+            } else {
+                OrientationLock.LOCKED
+            }
+            state.copy(orientationLock = next)
+        }
+    }
+
     fun updateReadingStatus(status: ReadingStatus) {
         val uri = _uiState.value.uriString
         if (uri.isBlank()) return
@@ -758,7 +936,7 @@ class ReaderViewModel(
                     documentUri = state.uriString,
                     documentTitle = state.documentTitle,
                     pageIndex = state.currentPage,
-                    customTitle = "Page ${state.currentPage + 1}"
+                    customTitle = ""
                 )
             }
         }
@@ -816,14 +994,12 @@ class ReaderViewModel(
         if (state.uriString.isBlank() || signatureVectorData.isBlank()) return
         viewModelScope.launch {
             preferencesRepository.setSavedSignatureVector(signatureVectorData)
-            libraryRepository.addAnnotation(
+            libraryRepository.stampSignatureAnnotation(
                 documentUri = state.uriString,
                 documentTitle = state.documentTitle,
                 pageIndex = state.currentPage,
-                type = AnnotationType.SIGNATURE,
-                quotedText = signerLabel.ifBlank { "Handwritten Vector Signature" },
-                noteText = "Signed on Page ${state.currentPage + 1}",
-                colorHex = "#B91C1C",
+                signerLabel = signerLabel,
+                colorHex = ContentColors.signatureInkHex,
                 signatureVectorData = signatureVectorData
             )
         }
@@ -835,10 +1011,56 @@ class ReaderViewModel(
         }
     }
 
-    fun ensureTextExtracted() {
+    fun loadCurrentPageTextIfNeeded() {
+        val engine = textEngine ?: return
         val state = _uiState.value
-        if (state.uriString.isBlank() || loadedTextUri == state.uriString) return
-        extractTextAndStructureInBackground(state.uriString, state.pageCount, immediate = true)
+        val uri = state.uriString
+        val pageIndex = state.currentPage
+        if (uri.isBlank() || state.currentPageText.isNotEmpty()) return
+        pageTextJob?.cancel()
+        pageTextJob = viewModelScope.launch(Dispatchers.Default) {
+            val text = when (val openRes = engine.open(Uri.parse(uri))) {
+                is OpenResult.Ok -> openRes.session.use { session ->
+                    if (pageIndex in 0 until session.pageCount) session.page(pageIndex).text else ""
+                }
+                is OpenResult.Error -> ""
+            }
+            if (_uiState.value.uriString == uri && _uiState.value.currentPage == pageIndex) {
+                _uiState.update { it.copy(currentPageText = text) }
+            }
+        }
+    }
+
+    fun loadStructureIfNeeded() {
+        val engine = textEngine ?: return
+        val ctx = appContext ?: return
+        val state = _uiState.value
+        val uri = state.uriString
+        if (uri.isBlank() || loadedStructureUri == uri || structureJob?.isActive == true) return
+        structureJob = viewModelScope.launch(Dispatchers.Default) {
+            val pages = mutableListOf<String>()
+            var totalPages = state.pageCount
+            when (val openRes = engine.open(Uri.parse(uri))) {
+                is OpenResult.Ok -> openRes.session.use { session ->
+                    totalPages = session.pageCount
+                    val cap = minOf(session.pageCount, 200)
+                    for (i in 0 until cap) {
+                        pages.add(session.page(i).text)
+                    }
+                }
+                is OpenResult.Error -> Unit
+            }
+            if (_uiState.value.uriString != uri) return@launch
+            val toc = PdfStructureParser.buildTableOfContents(ctx, pages, totalPages)
+            val links = PdfStructureParser.extractDocumentLinks(ctx, pages, totalPages)
+            loadedStructureUri = uri
+            _uiState.update {
+                it.copy(
+                    tocEntries = toc,
+                    documentLinks = links
+                )
+            }
+        }
     }
 
     fun setTextModeTheme(theme: TextModeTheme) {
@@ -866,16 +1088,47 @@ class ReaderViewModel(
         progressSaveJob = viewModelScope.launch {
             delay(350L)
             val state = _uiState.value
-            if (state.uriString.isNotBlank() && state.pageCount > 0 && !state.incognitoMode) {
+            val isIncognito = state.incognitoMode ||
+                preferencesRepository.preferencesFlow.first().incognitoMode
+            if (state.uriString.isNotBlank() && state.pageCount > 0 && !isIncognito) {
                 libraryRepository.updateProgress(
                     uriString = state.uriString,
                     currentPage = state.currentPage,
                     pageCount = state.pageCount,
                     zoomScale = state.zoomScale,
-                    incognitoMode = state.incognitoMode
+                    incognitoMode = false
                 )
             }
         }
+    }
+
+    fun closeDocument() {
+        val currentUri = _uiState.value.uriString
+        if (currentUri.isBlank() && openDocumentJob?.isActive != true) return
+        openDocumentJob?.cancel()
+        prefetchJob?.cancel()
+        dimensionScanJob?.cancel()
+        documentJob?.cancel()
+        bookmarksJob?.cancel()
+        annotationsJob?.cancel()
+        progressSaveJob?.cancel()
+        indexObserveJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
+        structureJob?.cancel()
+        pageTextJob?.cancel()
+        inPdfSearchJob?.cancel()
+        activeLoadingInitialPage = null
+        loadedStructureUri = null
+        prioritizedUri = null
+        lastObservedTextPages = -1
+        _viewOptions.value = ReaderViewOptions()
+        _uiState.update {
+            ReaderUiState(
+                incognitoMode = it.incognitoMode,
+                orientationLock = OrientationLock.AUTO
+            )
+        }
+        pdfEngine.closeDocumentAsync()
     }
 
     override fun onCleared() {
@@ -887,8 +1140,12 @@ class ReaderViewModel(
         bookmarksJob?.cancel()
         annotationsJob?.cancel()
         progressSaveJob?.cancel()
-        textExtractionJob?.cancel()
+        indexObserveJob?.cancel()
+        pendingDelayedRerunJob?.cancel()
+        structureJob?.cancel()
+        pageTextJob?.cancel()
         inPdfSearchJob?.cancel()
+        pdfEngine.closeDocumentAsync()
     }
 
     companion object {
@@ -896,7 +1153,11 @@ class ReaderViewModel(
             libraryRepository: PdfLibraryRepository,
             preferencesRepository: PreferencesRepository,
             pdfEngine: PdfEngine,
-            pdfTextExtractor: PdfTextExtractor
+            searchIndexRepository: SearchIndexRepository? = null,
+            searchIndexer: SearchIndexer? = null,
+            textEngine: PdfTextEngine? = null,
+            appContext: Context? = null,
+            initialPreferences: UserPreferences = UserPreferences()
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -904,7 +1165,11 @@ class ReaderViewModel(
                     libraryRepository = libraryRepository,
                     preferencesRepository = preferencesRepository,
                     pdfEngine = pdfEngine,
-                    pdfTextExtractor = pdfTextExtractor
+                    searchIndexRepository = searchIndexRepository,
+                    searchIndexer = searchIndexer,
+                    textEngine = textEngine,
+                    appContext = appContext,
+                    initialPreferences = initialPreferences
                 ) as T
             }
         }

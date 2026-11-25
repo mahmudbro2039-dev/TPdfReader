@@ -1,15 +1,16 @@
 package com.example.ui.components
 
-import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,10 +37,7 @@ import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.LibraryBooks
-import androidx.compose.material.icons.rounded.BatteryChargingFull
-import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.FolderOpen
@@ -61,6 +59,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -75,6 +74,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -92,12 +92,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import com.example.R
+import com.example.data.model.FolderKey
+import com.example.data.model.ReadingStatus
 import com.example.ui.model.FolderItem
 import com.example.ui.model.PdfItem
-import com.example.ui.model.percent
-import com.example.ui.model.progress
-import com.example.ui.theme.A4_RATIO
-import com.example.ui.theme.ReadingStatus
+import com.example.ui.theme.Alpha
 import com.example.ui.theme.TeenaTheme
 
 @Composable
@@ -138,10 +137,11 @@ fun StatusChip(
     val s = TeenaTheme.spacing
     val label = stringResource(
         when (status) {
-            ReadingStatus.ToRead -> R.string.status_to_read
-            ReadingStatus.Reading -> R.string.status_reading
-            ReadingStatus.Completed -> R.string.status_completed
-            ReadingStatus.OnHold -> R.string.status_on_hold
+            ReadingStatus.TO_READ -> R.string.status_to_read
+            ReadingStatus.READING -> R.string.status_reading
+            ReadingStatus.ON_HOLD -> R.string.status_on_hold
+            ReadingStatus.COMPLETED -> R.string.status_completed
+            ReadingStatus.ABANDONED -> R.string.status_abandoned
         }
     )
     Text(
@@ -160,33 +160,42 @@ fun StatusChip(
 }
 
 @Composable
+private fun rememberThumbnail(uri: String, widthPx: Int): State<ImageBitmap?> {
+    val context = LocalContext.current
+    val memoryHit = remember(uri, widthPx) { ThumbnailCache.peekMemory(uri, widthPx) }
+    return produceState<ImageBitmap?>(initialValue = memoryHit, uri, widthPx) {
+        val immediate = ThumbnailCache.peekMemory(uri, widthPx)
+        value = immediate
+        if (immediate == null && uri.isNotBlank()) {
+            value = ThumbnailCache.load(context, uri, widthPx)
+                ?.takeIf { !it.isRecycled }
+                ?.asImageBitmap()
+        }
+    }
+}
+
+@Composable
 fun PdfThumbnail(
     uri: String,
     width: Dp,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
     val density = LocalDensity.current
     val widthPx = remember(width, density) { with(density) { (width.roundToPx() * 2).coerceIn(160, 320) } }
-    val cached = remember(uri) { ThumbnailCache.peek(uri) }
-    val bmp by produceState<Bitmap?>(cached, uri, widthPx) {
-        if (value == null) {
-            value = ThumbnailCache.load(context, uri, widthPx)
-        }
-    }
+    val imageBitmap by rememberThumbnail(uri = uri, widthPx = widthPx)
     Box(
         modifier = modifier
             .width(width)
-            .aspectRatio(1f / A4_RATIO)
+            .aspectRatio(TeenaTheme.sizes.thumbAspectRatio)
             .clip(MaterialTheme.shapes.small)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(TeenaTheme.sizes.hairline, TeenaTheme.colors.hairline, MaterialTheme.shapes.small),
         contentAlignment = Alignment.Center
     ) {
-        val bitmap = bmp
-        if (bitmap != null && !bitmap.isRecycled) {
+        val cover = imageBitmap
+        if (cover != null) {
             Image(
-                bitmap = bitmap.asImageBitmap(),
+                bitmap = cover,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
@@ -208,17 +217,11 @@ fun PdfCover(
     shape: Shape = MaterialTheme.shapes.large,
     targetWidth: Dp = TeenaTheme.sizes.gridMinCell
 ) {
-    val context = LocalContext.current
     val density = LocalDensity.current
     val widthPx = remember(targetWidth, density) {
         with(density) { (targetWidth.roundToPx() * 2).coerceIn(160, 360) }
     }
-    val cached = remember(uri) { ThumbnailCache.peek(uri) }
-    val bmp by produceState<Bitmap?>(cached, uri, widthPx) {
-        if (value == null) {
-            value = ThumbnailCache.load(context, uri, widthPx)
-        }
-    }
+    val imageBitmap by rememberThumbnail(uri = uri, widthPx = widthPx)
     Box(
         modifier = modifier
             .clip(shape)
@@ -230,10 +233,10 @@ fun PdfCover(
             ),
         contentAlignment = Alignment.Center
     ) {
-        val bitmap = bmp
-        if (bitmap != null && !bitmap.isRecycled) {
+        val cover = imageBitmap
+        if (cover != null) {
             Image(
-                bitmap = bitmap.asImageBitmap(),
+                bitmap = cover,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
@@ -249,6 +252,7 @@ fun PdfCover(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PdfRowCard(
     item: PdfItem,
@@ -263,9 +267,16 @@ fun PdfRowCard(
     val haptic = LocalHapticFeedback.current
 
     Surface(
-        onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
+            .clip(if (compact) MaterialTheme.shapes.medium else MaterialTheme.shapes.large)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onMore(item)
+                }
+            )
             .testTag("pdf_row_${item.id}"),
         shape = if (compact) MaterialTheme.shapes.medium else MaterialTheme.shapes.large,
         color = cs.surface,
@@ -281,7 +292,8 @@ fun PdfRowCard(
         ) {
             PdfThumbnail(
                 uri = item.uri,
-                width = if (compact) sz.compactThumbWidth else sz.thumbWidth
+                width = if (compact) sz.compactThumbWidth else sz.thumbWidth,
+                modifier = Modifier.alpha(if (item.isMissing) Alpha.missing else 1f)
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -315,15 +327,15 @@ fun PdfRowCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     StatusChip(item.status, compact = compact)
-                    val metaText = if (item.totalPages > 0) {
-                        stringResource(R.string.page_of, item.currentPage, item.totalPages)
-                    } else {
-                        stringResource(R.string.file_meta_ready, formatFileSize(item.sizeBytes))
+                    val metaText = when {
+                        item.isMissing -> stringResource(R.string.file_unavailable)
+                        item.hasBeenOpened && item.totalPages > 0 -> stringResource(R.string.page_of, item.currentPage, item.totalPages)
+                        else -> stringResource(R.string.file_meta_ready, formatFileSize(item.sizeBytes))
                     }
                     Text(
                         text = metaText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = cs.onSurfaceVariant,
+                        style = if (item.isMissing) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                        color = if (item.isMissing) cs.error else cs.onSurfaceVariant,
                         maxLines = 1,
                         softWrap = false,
                         overflow = TextOverflow.Ellipsis,
@@ -392,8 +404,13 @@ fun HeroContinueCard(
                         color = cs.primary,
                         maxLines = 1
                     )
+                    val heroFolderLabel = if (FolderKey.canonical(item.folderName) == FolderKey.IMPORTED) {
+                        stringResource(R.string.folder_imported)
+                    } else {
+                        item.folderDisplayName
+                    }
                     Text(
-                        text = stringResource(R.string.in_folder, item.folderName),
+                        text = stringResource(R.string.in_folder, heroFolderLabel),
                         style = MaterialTheme.typography.labelSmall,
                         color = cs.onSurfaceVariant,
                         maxLines = 1,
@@ -448,83 +465,6 @@ fun HeroContinueCard(
     }
 }
 
-@Composable
-fun NotesSummaryCard(
-    highlightCount: Int,
-    bookmarkCount: Int,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val s = TeenaTheme.spacing
-    val sz = TeenaTheme.sizes
-    val cs = MaterialTheme.colorScheme
-    val totalCount = highlightCount + bookmarkCount
-    val subtitle = if (totalCount == 0) {
-        stringResource(R.string.notes_hub_empty)
-    } else {
-        stringResource(
-            R.string.notes_hub_summary,
-            pluralStringResource(R.plurals.highlight_count, highlightCount, highlightCount),
-            pluralStringResource(R.plurals.bookmark_count, bookmarkCount, bookmarkCount)
-        )
-    }
-
-    Surface(
-        onClick = onClick,
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag("notes_highlights_card"),
-        shape = MaterialTheme.shapes.large,
-        color = cs.surface,
-        border = BorderStroke(sz.hairline, TeenaTheme.colors.hairline)
-    ) {
-        Row(
-            modifier = Modifier.padding(s.md),
-            horizontalArrangement = Arrangement.spacedBy(s.md),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(sz.folderIconBox)
-                    .clip(MaterialTheme.shapes.medium)
-                    .background(cs.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Bookmarks,
-                    contentDescription = null,
-                    tint = cs.primary,
-                    modifier = Modifier.size(sz.iconMd)
-                )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(s.xxs)
-            ) {
-                Text(
-                    text = stringResource(R.string.notes_highlights),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = cs.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = cs.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Icon(
-                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                contentDescription = null,
-                tint = cs.onSurfaceVariant
-            )
-        }
-    }
-}
-
 
 @Composable
 fun FilterChipsRow(
@@ -540,13 +480,12 @@ fun FilterChipsRow(
     val c = TeenaTheme.colors
 
     val chipEntries = remember(counts, totalCount) {
-        listOf<Pair<ReadingStatus?, Int>>(
-            null to totalCount,
-            ReadingStatus.ToRead to (counts[ReadingStatus.ToRead] ?: 0),
-            ReadingStatus.Reading to (counts[ReadingStatus.Reading] ?: 0),
-            ReadingStatus.Completed to (counts[ReadingStatus.Completed] ?: 0),
-            ReadingStatus.OnHold to (counts[ReadingStatus.OnHold] ?: 0)
-        )
+        buildList<Pair<ReadingStatus?, Int>> {
+            add(null to totalCount)
+            ReadingStatus.entries.forEach { status ->
+                add(status to (counts[status] ?: 0))
+            }
+        }
     }
 
     LazyRow(
@@ -565,10 +504,11 @@ fun FilterChipsRow(
             val baseLabel = stringResource(
                 when (status) {
                     null -> R.string.filter_all
-                    ReadingStatus.ToRead -> R.string.status_to_read
-                    ReadingStatus.Reading -> R.string.status_reading
-                    ReadingStatus.Completed -> R.string.status_completed
-                    ReadingStatus.OnHold -> R.string.status_on_hold
+                    ReadingStatus.TO_READ -> R.string.status_to_read
+                    ReadingStatus.READING -> R.string.status_reading
+                    ReadingStatus.ON_HOLD -> R.string.status_on_hold
+                    ReadingStatus.COMPLETED -> R.string.status_completed
+                    ReadingStatus.ABANDONED -> R.string.status_abandoned
                 }
             )
             FilterChip(
@@ -621,7 +561,7 @@ fun FolderCard(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .testTag("folder_row_${folder.name}"),
+            .testTag("folder_row_${folder.key}"),
         shape = MaterialTheme.shapes.large,
         color = cs.surface,
         border = BorderStroke(sz.hairline, c.hairline),
@@ -660,7 +600,7 @@ fun FolderCard(
                             modifier = Modifier
                                 .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = 6f }
-                                .alpha(0.92f)
+                                .alpha(Alpha.elevatedPill)
                                 .width(sz.folderMiniCoverWidth)
                                 .aspectRatio(sz.coverRatio)
                                 .shadow(sz.cardElevation, MaterialTheme.shapes.small)
@@ -685,7 +625,7 @@ fun FolderCard(
                             modifier = Modifier
                                 .offset(x = -sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = -8f }
-                                .alpha(0.9f)
+                                .alpha(Alpha.high)
                                 .width(sz.folderMiniCoverWidth)
                                 .aspectRatio(sz.coverRatio)
                                 .shadow(sz.cardElevation, MaterialTheme.shapes.small)
@@ -697,7 +637,7 @@ fun FolderCard(
                             modifier = Modifier
                                 .offset(x = sz.folderMiniCoverOffsetX, y = sz.folderMiniCoverOffsetY)
                                 .graphicsLayer { rotationZ = 8f }
-                                .alpha(0.9f)
+                                .alpha(Alpha.high)
                                 .width(sz.folderMiniCoverWidth)
                                 .aspectRatio(sz.coverRatio)
                                 .shadow(sz.cardElevation, MaterialTheme.shapes.small)
@@ -723,8 +663,13 @@ fun FolderCard(
                     .padding(horizontal = s.md, vertical = s.md),
                 verticalArrangement = Arrangement.spacedBy(s.xs)
             ) {
+                val folderLabel = if (folder.key == FolderKey.IMPORTED) {
+                    stringResource(R.string.folder_imported)
+                } else {
+                    folder.name.ifBlank { stringResource(R.string.folder_imported) }
+                }
                 Text(
-                    text = folder.name,
+                    text = folderLabel,
                     style = MaterialTheme.typography.titleMedium,
                     color = cs.onSurface,
                     minLines = 2,
@@ -802,7 +747,7 @@ fun FolderBreadcrumb(
                 verticalArrangement = Arrangement.spacedBy(s.xxs)
             ) {
                 Text(
-                    text = currentFolder,
+                    text = currentFolder.ifBlank { stringResource(R.string.breadcrumb_storage) },
                     style = MaterialTheme.typography.titleMedium,
                     color = cs.onSurface,
                     maxLines = 1,
@@ -917,8 +862,8 @@ fun ShimmerLoadingList(modifier: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
     val transition = rememberInfiniteTransition(label = "shimmer")
     val alpha by transition.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 0.9f,
+        initialValue = Alpha.shimmerMin,
+        targetValue = Alpha.high,
         animationSpec = TeenaTheme.motion.shimmerSpec(),
         label = "shimmer_alpha"
     )
@@ -957,8 +902,8 @@ fun ShimmerLoadingGrid(modifier: Modifier = Modifier) {
     val cs = MaterialTheme.colorScheme
     val transition = rememberInfiniteTransition(label = "shimmer_grid")
     val alpha by transition.animateFloat(
-        initialValue = 0.4f,
-        targetValue = 0.9f,
+        initialValue = Alpha.shimmerMin,
+        targetValue = Alpha.high,
         animationSpec = TeenaTheme.motion.shimmerSpec(),
         label = "shimmer_grid_alpha"
     )
@@ -1031,7 +976,7 @@ fun TeenaBottomBar(
         Surface(
             shape = CircleShape,
             color = cs.surface,
-            border = BorderStroke(sz.hairline, c.hairline.copy(alpha = 0.85f)),
+            border = BorderStroke(sz.hairline, c.hairline.copy(alpha = Alpha.strongContent)),
             shadowElevation = sz.heroElevation,
             modifier = Modifier
                 .widthIn(max = sz.bottomBarMaxWidth)
@@ -1196,33 +1141,21 @@ fun DeviceScanProgressStrip(
 @Composable
 fun DeviceAccessStatusBanner(
     hasAllFilesAccess: Boolean,
-    isBatteryOptimizationIgnored: Boolean,
     onRequestAllFilesAccess: () -> Unit,
-    onRequestBatteryExemption: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val needsFiles = !hasAllFilesAccess
-    val needsBattery = !isBatteryOptimizationIgnored
-    if (!needsFiles && !needsBattery) return
+    if (hasAllFilesAccess) return
 
     val s = TeenaTheme.spacing
     val sz = TeenaTheme.sizes
     val cs = MaterialTheme.colorScheme
     val c = TeenaTheme.colors
 
-    val description = if (needsFiles) {
-        stringResource(R.string.perm_banner_files_desc)
-    } else {
-        stringResource(R.string.perm_banner_battery_desc)
-    }
-    val actionLabel = if (needsFiles) {
-        stringResource(R.string.perm_grant_action)
-    } else {
-        stringResource(R.string.perm_disable_battery_action)
-    }
-    val bannerIcon = if (needsFiles) Icons.Rounded.FolderOpen else Icons.Rounded.BatteryChargingFull
-    val onAction = if (needsFiles) onRequestAllFilesAccess else onRequestBatteryExemption
+    val description = stringResource(R.string.perm_banner_files_desc)
+    val actionLabel = stringResource(R.string.perm_grant_action)
+    val bannerIcon = Icons.Rounded.FolderOpen
+    val onAction = onRequestAllFilesAccess
 
     Surface(
         color = cs.surface,
